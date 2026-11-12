@@ -1,0 +1,59 @@
+name: LiderTv Native Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Android debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - name: Kaynak kodu al
+        uses: actions/checkout@v7
+
+      - name: Java 17 kur
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle cache ve kurulum
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Android SDK kontrol
+        run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+          sdkmanager --list_installed | head -80 || true
+
+      - name: Debug APK derle
+        working-directory: app
+        run: |
+          chmod +x ../gradlew
+          ../gradlew assembleDebug --console=plain --stacktrace
+
+      - name: APK paketle
+        run: |
+          rm -rf dist
+          mkdir -p dist
+          APK=$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | head -1)
+          test -n "$APK"
+          cp "$APK" dist/LiderTv-native-1.0.0-debug.apk
+          sha256sum dist/LiderTv-native-1.0.0-debug.apk > dist/SHA256SUMS.txt
+          ls -lah dist
+
+      - name: APK artifact yukle
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiderTv-native-1.0.0-debug
+          path: |
+            dist/LiderTv-native-1.0.0-debug.apk
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
