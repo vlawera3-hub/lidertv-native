@@ -1,0 +1,82 @@
+package tr.lidertv.nativeapp.data.profile
+
+import tr.lidertv.nativeapp.data.prefs.AppTheme
+import tr.lidertv.nativeapp.data.prefs.SidebarPosition
+import tr.lidertv.nativeapp.data.prefs.UserPrefs
+
+/**
+ * Préférences PAR PROFIL. Chaque champ est un SURCHARGE facultative (null = hérite de la valeur globale),
+ * si bien que le profil « Principal » migré garde les réglages existants sans rien copier.
+ * Les réglages techniques (lecteur, tampon, synchro, sources) ne sont volontairement PAS ici.
+ */
+data class ProfilePrefs(
+    val theme: AppTheme? = null,
+    val sidebarPosition: SidebarPosition? = null,
+    val showChannelNumbers: Boolean? = null,
+    val showChannelLogos: Boolean? = null,
+    /** Largeur de la colonne des noms du Guide (clé de GuideNameWidth). */
+    val guideNameWidth: String? = null,
+    val hideAdultCategories: Boolean? = null,
+    val resumePlayback: Boolean? = null,
+    val autoPlayNextEpisode: Boolean? = null,
+    val autoPlayLastOnLaunch: Boolean? = null,
+    /** Langues des contenus (CSV ; modèle seulement — le filtre est branché ailleurs). */
+    val languages: String? = null,
+    val includeMulti: Boolean? = null,
+    val includeUnknownLang: Boolean? = null,
+    /** Mode simple (grandes tuiles à la place de l'accueil) : propre à chaque profil. */
+    val simpleMode: Boolean? = null,
+    /** Dernier groupe de chaînes choisi dans le Guide TV (identifiant de catégorie du Direct, « __all__ », « __fav__ »). Pas une préférence globale : jamais appliqué à [UserPrefs]. */
+    val guideGroup: String? = null,
+) {
+    /** Applique les surcharges du profil sur les préférences globales. [isKids] force le contrôle parental. */
+    fun applyTo(base: UserPrefs, isKids: Boolean = false): UserPrefs = base.copy(
+        theme = theme ?: base.theme,
+        sidebarPosition = sidebarPosition ?: base.sidebarPosition,
+        showChannelNumbers = showChannelNumbers ?: base.showChannelNumbers,
+        showChannelLogos = showChannelLogos ?: base.showChannelLogos,
+        guideNameWidth = guideNameWidth ?: base.guideNameWidth,
+        hideAdultCategories = if (isKids) true else hideAdultCategories ?: base.hideAdultCategories,
+        resumePlayback = resumePlayback ?: base.resumePlayback,
+        autoPlayNextEpisode = autoPlayNextEpisode ?: base.autoPlayNextEpisode,
+        autoPlayLastOnLaunch = autoPlayLastOnLaunch ?: base.autoPlayLastOnLaunch,
+        languages = languages ?: base.languages,
+        includeMulti = includeMulti ?: base.includeMulti,
+        includeUnknownLang = includeUnknownLang ?: base.includeUnknownLang,
+        simpleMode = simpleMode ?: base.simpleMode,
+    )
+
+    companion object {
+        const val THEME = "theme"
+        const val SIDEBAR = "sidebar"
+        const val CHANNEL_NUMBERS = "channel_numbers"
+        const val CHANNEL_LOGOS = "channel_logos"
+        const val GUIDE_NAME_WIDTH = "guide_name_width"
+        const val HIDE_ADULT = "hide_adult"
+        const val RESUME = "resume"
+        const val AUTOPLAY_NEXT = "autoplay_next"
+        const val AUTOPLAY_LAST = "autoplay_last"
+        const val LANGUAGES = "languages"
+        const val INCLUDE_MULTI = "include_multi"
+        const val INCLUDE_UNKNOWN = "include_unknown"
+        const val SIMPLE_MODE = "simple_mode"
+        const val GUIDE_GROUP = "guide_group"
+
+        fun fromMap(m: Map<String, String>) = ProfilePrefs(
+            theme = m[THEME]?.let { AppTheme.parse(it) },
+            sidebarPosition = m[SIDEBAR]?.let { runCatching { SidebarPosition.valueOf(it) }.getOrNull() },
+            showChannelNumbers = m[CHANNEL_NUMBERS]?.toBooleanStrictOrNull(),
+            showChannelLogos = m[CHANNEL_LOGOS]?.toBooleanStrictOrNull(),
+            guideNameWidth = m[GUIDE_NAME_WIDTH]?.takeIf { it.isNotEmpty() },
+            hideAdultCategories = m[HIDE_ADULT]?.toBooleanStrictOrNull(),
+            resumePlayback = m[RESUME]?.toBooleanStrictOrNull(),
+            autoPlayNextEpisode = m[AUTOPLAY_NEXT]?.toBooleanStrictOrNull(),
+            autoPlayLastOnLaunch = m[AUTOPLAY_LAST]?.toBooleanStrictOrNull(),
+            languages = m[LANGUAGES],
+            includeMulti = m[INCLUDE_MULTI]?.toBooleanStrictOrNull(),
+            includeUnknownLang = m[INCLUDE_UNKNOWN]?.toBooleanStrictOrNull(),
+            simpleMode = m[SIMPLE_MODE]?.toBooleanStrictOrNull(),
+            guideGroup = m[GUIDE_GROUP]?.takeIf { it.isNotEmpty() },
+        )
+    }
+}

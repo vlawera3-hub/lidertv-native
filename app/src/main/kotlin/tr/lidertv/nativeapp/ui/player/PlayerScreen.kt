@@ -1,0 +1,1496 @@
+package tr.lidertv.nativeapp.ui.player
+
+import androidx.compose.ui.draw.alpha
+import kotlinx.coroutines.flow.distinctUntilChanged
+import android.content.Intent
+import android.net.Uri
+import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.media3.common.util.UnstableApi
+import androidx.tv.material3.Text
+import tr.lidertv.nativeapp.adaptive.AdaptiveProfile
+import tr.lidertv.nativeapp.adaptive.NetworkMonitor
+import tr.lidertv.nativeapp.adaptive.PlaybackResolver
+import tr.lidertv.nativeapp.adaptive.ResolvedPlayback
+import tr.lidertv.nativeapp.data.db.ChannelDao
+import tr.lidertv.nativeapp.data.db.streamProps
+import tr.lidertv.nativeapp.data.db.EpgDao
+import tr.lidertv.nativeapp.data.db.EpgEntity
+import tr.lidertv.nativeapp.data.prefs.UserPrefs
+import tr.lidertv.nativeapp.data.prefs.UserPreferencesStore
+import tr.lidertv.nativeapp.data.recording.RecordingRepository
+import tr.lidertv.nativeapp.data.repo.HistoryRepository
+import tr.lidertv.nativeapp.data.repo.LivePlaybackQueue
+import tr.lidertv.nativeapp.data.repo.PlaybackContext
+import tr.lidertv.nativeapp.data.repo.ProviderRepository
+import tr.lidertv.nativeapp.data.repo.TitleCleaner
+import tr.lidertv.nativeapp.i18n.DesignStrings
+import tr.lidertv.nativeapp.i18n.LocalDs
+import tr.lidertv.nativeapp.i18n.LocalStrings
+import tr.lidertv.nativeapp.i18n.recConnectionBusy
+import tr.lidertv.nativeapp.ui.common.EpgClock
+import tr.lidertv.nativeapp.ui.common.ModalFocusScope
+import tr.lidertv.nativeapp.ui.common.Toaster
+import tr.lidertv.nativeapp.ui.common.design
+import tr.lidertv.nativeapp.ui.design.DIcon
+import tr.lidertv.nativeapp.ui.mobile.lockOrientation
+import tr.lidertv.nativeapp.ui.mobile.MobileControls
+import tr.lidertv.nativeapp.ui.mobile.GestureHudView
+import tr.lidertv.nativeapp.ui.mobile.enterPip
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.aspectRatio
+import tr.lidertv.nativeapp.ui.design.FocusSurface
+import tr.lidertv.nativeapp.ui.design.LiveBadge
+import tr.lidertv.nativeapp.ui.design.LogoBox
+import tr.lidertv.nativeapp.ui.design.Manrope
+import tr.lidertv.nativeapp.ui.design.PillButton
+import tr.lidertv.nativeapp.ui.design.Sora
+import tr.lidertv.nativeapp.ui.design.Ux
+import tr.lidertv.nativeapp.ui.design.designT
+import tr.lidertv.nativeapp.ui.design.spx
+import tr.lidertv.nativeapp.ui.player.engine.AspectMode
+import tr.lidertv.nativeapp.ui.player.engine.BufferPreset
+import tr.lidertv.nativeapp.ui.player.engine.ChannelPlaybackMemory
+import tr.lidertv.nativeapp.ui.player.engine.Combo
+import tr.lidertv.nativeapp.ui.player.engine.DecoderMode
+import tr.lidertv.nativeapp.ui.player.engine.EngineKind
+import tr.lidertv.nativeapp.ui.player.engine.Notice
+import tr.lidertv.nativeapp.ui.player.engine.Phase
+import tr.lidertv.nativeapp.ui.player.engine.PlayErrorKind
+import tr.lidertv.nativeapp.ui.player.engine.PlaybackSession
+import tr.lidertv.nativeapp.ui.player.engine.PrefsChannelPlaybackMemory
+import tr.lidertv.nativeapp.ui.player.osd.LiveOsd
+import tr.lidertv.nativeapp.ui.player.osd.LiveOsdFocus
+import tr.lidertv.nativeapp.ui.player.osd.LiveOsdLogic
+import tr.lidertv.nativeapp.ui.player.osd.LiveOsdState
+import tr.lidertv.nativeapp.ui.player.osd.OsdActionId
+import tr.lidertv.nativeapp.ui.player.osd.OsdActionInputs
+import tr.lidertv.nativeapp.ui.player.osd.OsdActions
+import tr.lidertv.nativeapp.ui.player.osd.OsdBadge
+import tr.lidertv.nativeapp.ui.player.osd.OsdChannelInfo
+import tr.lidertv.nativeapp.ui.player.osd.OsdDecision
+import tr.lidertv.nativeapp.ui.player.osd.OsdKey
+import tr.lidertv.nativeapp.ui.player.osd.OsdModel
+import tr.lidertv.nativeapp.ui.player.osd.OsdProgress
+import tr.lidertv.nativeapp.ui.player.osd.OsdRecent
+import tr.lidertv.nativeapp.ui.player.osd.OsdStage
+import tr.lidertv.nativeapp.ui.player.osd.liveOsdStrings
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+@HiltViewModel
+class PlayerViewModel @Inject constructor(
+    private val playback: PlaybackContext,
+    private val history: HistoryRepository,
+    private val zapQueue: LivePlaybackQueue,
+    private val provider: ProviderRepository,
+    private val epgDao: EpgDao,
+    private val recordings: RecordingRepository,
+    private val prefs: UserPreferencesStore,
+    private val channelDao: ChannelDao,
+    private val profiles: tr.lidertv.nativeapp.data.profile.ProfileRepository,
+    private val channelOrder: tr.lidertv.nativeapp.data.repo.ChannelOrderRepository,
+    private val adaptive: AdaptiveProfile,
+    private val categoryManager: tr.lidertv.nativeapp.data.repo.CategoryManager,
+    private val catalogRepo: tr.lidertv.nativeapp.data.repo.CatalogRepository,
+    private val episodeDao: tr.lidertv.nativeapp.data.db.EpisodeDao,
+    private val trakt: tr.lidertv.nativeapp.data.trakt.TraktScrobbler,
+    private val skips: tr.lidertv.nativeapp.data.skip.SkipSegmentsRepository,
+    val memory: PrefsChannelPlaybackMemory,
+    val network: NetworkMonitor,
+    val remoteBus: tr.lidertv.nativeapp.data.remote.RemoteBus,
+    val guard: tr.lidertv.nativeapp.data.parental.ParentalGuard,
+    private val movieDao: tr.lidertv.nativeapp.data.db.MovieDao,
+    private val vodInfoDao: tr.lidertv.nativeapp.data.db.VodInfoDao,
+) : ViewModel() {
+
+    val prefsFlow: Flow<UserPrefs> = prefs.flow
+    suspend fun playbackPrefs(): UserPrefs = prefs.flow.first()
+
+    /** Réglages EFFECTIFS : les choix manuels de l'utilisateur l'emportent sur l'automatique. */
+    fun resolved(p: UserPrefs): ResolvedPlayback = PlaybackResolver.resolve(adaptive.state.value.auto, p, adaptive.heapClassMb)
+    val adaptiveState get() = adaptive.state
+
+    val current: StateFlow<PlaybackContext.Item?> = playback.current
+
+    /**
+     * Programme en cours de la chaîne regardée (guide). Relu à la FIN du programme (borné 15 s – 2 min), pas toutes les
+     * 20 s. Sans guide : programme court du fournisseur demandé 2 s après le zap, pas pendant l'ouverture du flux.
+     */
+    val nowProgramme: StateFlow<EpgEntity?> = playback.current.flatMapLatest { item ->
+        if (item == null || item.kind != "LIVE") flowOf(null)
+        else flow<EpgEntity?> {
+            var first = true
+            while (true) {
+                val ch = channelDao.byRemoteId(item.providerId, item.remoteId)
+                val now = System.currentTimeMillis()
+                var cur = ch?.let { epgDao.rangeForChannels(listOf(it.id), now, now + 1).firstOrNull { p -> p.startMs <= now && p.endMs > now } }
+                if (cur == null && ch != null) {
+                    if (first) { emit(null); delay(2_000) }
+                    // Pas de guide pour cette chaîne : programme court du fournisseur (limité, voir ensureShortEpg).
+                    if (catalogRepo.ensureShortEpg(listOf(ch.id))) {
+                        val t = System.currentTimeMillis()
+                        cur = epgDao.rangeForChannels(listOf(ch.id), t, t + 1).firstOrNull { p -> p.startMs <= t && p.endMs > t }
+                    }
+                }
+                first = false
+                emit(cur)
+                delay(((cur?.endMs ?: 0L) - System.currentTimeMillis() + 1_000).coerceIn(15_000L, 120_000L))
+            }
+        }
+    }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    fun recordLive(maxMinutes: Int = 120, toastTemplate: String = "Recording queued (max %1\$d min)") {
+        val c = playback.current.value ?: return
+        if (c.kind != "LIVE") return
+        viewModelScope.launch {
+            recordings.enqueue(c.providerId, "LIVE", c.remoteId, c.title, c.streamUrl, maxMinutes)
+            Toaster.ok(toastTemplate.format(maxMinutes))
+        }
+    }
+
+    /**
+     * La chaîne regardée est-elle dans les favoris du profil ? Même clé que la liste du Direct
+     * (`LiveViewModel.toggleFavorite`) : fournisseur de la chaîne, genre « LIVE », identifiant distant.
+     */
+    val isFavoriteNow: StateFlow<Boolean> = playback.current.flatMapLatest { item ->
+        if (item == null || item.kind != "LIVE") flowOf(false) else catalogRepo.isFavorite(item.providerId, "LIVE", item.remoteId)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** Ajoute la chaîne regardée aux favoris, ou l'en retire (bouton de l'OSD du Direct). */
+    fun toggleFavorite() {
+        val c = playback.current.value ?: return
+        if (c.kind != "LIVE") return
+        viewModelScope.launch {
+            val on = catalogRepo.isFavorite(c.providerId, "LIVE", c.remoteId).first()
+            catalogRepo.setFavorite(c.providerId, "LIVE", c.remoteId, !on)
+        }
+    }
+
+    private fun setLive(target: tr.lidertv.nativeapp.data.db.ChannelEntity, url: String) {
+        playback.set(PlaybackContext.Item(
+            providerId = target.providerId, kind = "LIVE", remoteId = target.remoteId, title = target.title, poster = target.logo, streamUrl = url,
+            badge = TitleCleaner.prefixBadge(target.name, TitleCleaner.clean(target.name, live = true).title),
+        ))
+    }
+
+    /** Chaîne suivante / précédente de la file de zapping (live) ; renvoie la nouvelle URL ou null. */
+    // Chaîne verrouillée : la file ne bouge pas, la fenêtre de code s'affiche (guard.pending) ; null jusqu'à l'accord.
+    suspend fun zap(forward: Boolean): String? {
+        val target = zapQueue.peek(forward) ?: return null
+        return guard.request(target) { zapQueue.moveTo(target); setLive(target, target.streamUrl); target.streamUrl }
+    }
+
+    /** Programme qui suit le programme en cours de la chaîne regardée (« Ensuite »). Relu avec le programme en cours. */
+    val nextProgramme: StateFlow<EpgEntity?> = kotlinx.coroutines.flow.combine(playback.current, nowProgramme) { i, n -> i to n }
+        .distinctUntilChanged()
+        .flatMapLatest { (item, now) ->
+            flow<EpgEntity?> {
+                if (item == null || item.kind != "LIVE") { emit(null); return@flow }
+                val ch = channelDao.byRemoteId(item.providerId, item.remoteId)
+                emit(ch?.let { upcomingFor(it.id, 1, now).firstOrNull() })
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private suspend fun upcomingFor(channelId: Long, count: Int, now: EpgEntity?): List<EpgEntity> {
+        val t = System.currentTimeMillis()
+        return ProgrammeInfo.after(epgDao.rangeForChannels(listOf(channelId), t - 60_000, t + 12 * 60 * 60_000), now, t, count)
+    }
+
+    /** Fiche « programme » du Direct : les [count] programmes suivants de la chaîne regardée. */
+    suspend fun upcoming(count: Int): List<EpgEntity> {
+        val item = playback.current.value?.takeIf { it.kind == "LIVE" } ?: return emptyList()
+        val ch = channelDao.byRemoteId(item.providerId, item.remoteId) ?: return emptyList()
+        return upcomingFor(ch.id, count, nowProgramme.value)
+    }
+
+    /** Fiche « programme » VOD : année, résumé, genre du film / de l'épisode en cours, depuis la base locale. */
+    suspend fun vodFacts(): VodFacts? {
+        val c = playback.current.value ?: return null
+        return when (c.kind) {
+            "MOVIE" -> {
+                val m = movieDao.byRemoteId(c.providerId, c.remoteId)
+                val info = vodInfoDao.get(c.providerId, c.remoteId)
+                VodFacts(m?.year ?: ProgrammeInfo.yearOf(info?.releaseDate), info?.plot?.takeIf { it.isNotBlank() } ?: m?.plot, info?.genre ?: m?.genre)
+            }
+            "EPISODE" -> episodeDao.byRemoteId(c.providerId, c.remoteId)?.let { VodFacts(null, it.plot, null) }
+            else -> null
+        }
+    }
+
+    data class DrawerEntry(
+        val channel: tr.lidertv.nativeapp.data.db.ChannelEntity,
+        val now: EpgEntity?, val next: EpgEntity?, val isCurrent: Boolean,
+    )
+
+    private suspend fun entriesFor(channels: List<tr.lidertv.nativeapp.data.db.ChannelEntity>, currentId: Long?): List<DrawerEntry> {
+        val now = System.currentTimeMillis()
+        val rows = channels.map { it.id }.chunked(500).flatMap { epgDao.rangeForChannels(it, now - 30 * 60_000, now + 4 * 60 * 60_000) }.groupBy { it.channelId }
+        return channels.map { c ->
+            val list = rows[c.id].orEmpty()
+            DrawerEntry(c, list.firstOrNull { it.startMs <= now && it.endMs > now }, list.firstOrNull { it.startMs > now }, c.id == currentId)
+        }
+    }
+
+    /** File de zapping courante (la liste que l'utilisateur parcourait avant d'ouvrir le lecteur). */
+    // Recalculée quand la LISTE change, pas à chaque zap (seule la position bouge alors) : la chaîne en cours est
+    // marquée dans `queue` d'après la lecture. Avant : jusqu'à 400 chaînes + leur guide relus en base à chaque appui.
+    private val queueEntries: StateFlow<List<DrawerEntry>> = zapQueue.state.map { it?.channels.orEmpty() }
+        .distinctUntilChanged { a, b -> a.size == b.size && a.map { it.id } == b.map { it.id } }
+        // Programmes relus chaque minute : la liste reste abonnée pendant la lecture, ils ne doivent pas rester figés.
+        .flatMapLatest { list -> flow { while (true) { emit(entriesFor(list, null)); delay(60_000) } } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Catégorie parcourue dans le tiroir (null = la file de zapping courante). */
+    private val browsedCategory = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    private val browsedEntries = kotlinx.coroutines.flow.MutableStateFlow<List<DrawerEntry>?>(null)
+
+    /** Programmes obtenus par le secours « programme court » (guide complet absent), par chaîne. */
+    private val shortProgrammes = kotlinx.coroutines.flow.MutableStateFlow<Map<Long, Pair<EpgEntity?, EpgEntity?>>>(emptyMap())
+
+    val queue: StateFlow<List<DrawerEntry>> = kotlinx.coroutines.flow.combine(queueEntries, browsedEntries, playback.current, shortProgrammes) { q, b, cur, sp ->
+        val base = (b ?: q).map { it.copy(isCurrent = it.channel.remoteId == cur?.remoteId) }
+        if (sp.isEmpty()) base else base.map { e -> if (e.now == null) sp[e.channel.id]?.let { (n, x) -> e.copy(now = n, next = x) } ?: e else e }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Catégories LIVE actives (colonne de gauche du tiroir). */
+    val categories: StateFlow<List<tr.lidertv.nativeapp.data.repo.CategoryRow>> = playback.current.flatMapLatest { item ->
+        // Seulement les catégories ACTIVES : une catégorie désactivée n'a plus de chaînes (liste vide si on la choisit).
+        if (item == null) flowOf(emptyList()) else categoryManager.observe(item.providerId, "LIVE", "").map { rows -> rows.filter { it.enabled } }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val activeCategory: StateFlow<String?> = browsedCategory
+
+    /** Tiroir : complète les lignes sans programme (chaînes visibles ou focalisée) via le programme court du fournisseur. */
+    fun fillProgrammes(channels: List<tr.lidertv.nativeapp.data.db.ChannelEntity>) {
+        if (channels.isEmpty()) return
+        viewModelScope.launch {
+            if (!catalogRepo.ensureShortEpg(channels.map { it.id })) return@launch
+            val got = entriesFor(channels, null).filter { it.now != null || it.next != null }
+            if (got.isNotEmpty()) shortProgrammes.value = shortProgrammes.value + got.associate { it.channel.id to (it.now to it.next) }
+        }
+    }
+
+    /** Charge les chaînes d'une catégorie dans le tiroir (sans zapper), après un court anti-rebond (voir [DebouncedBrowser]). */
+    fun browse(categoryId: String) {
+        if (playback.current.value == null) return
+        browser.request(categoryId)
+    }
+
+    /** Catégorie demandée (focalisée) dont la liste n'est pas encore arrivée ; null = la liste affichée est à jour. */
+    val pendingCategory: StateFlow<String?> get() = browser.pending
+
+    private val browser = DebouncedBrowser(viewModelScope) { id -> loadCategory(id) }
+
+    /** Liste des chaînes d'une catégorie du tiroir : « Toutes les chaînes » (ordre du Direct), Favoris, ou une catégorie. */
+    private suspend fun loadCategory(categoryId: String) {
+        val cur = playback.current.value ?: return
+        val pid = cur.providerId
+        val channels = when (categoryId) {
+            tr.lidertv.nativeapp.ui.live.CATEGORY_FAVORITES -> channelOrder.favorites(pid)
+            tr.lidertv.nativeapp.ui.live.CATEGORY_ALL -> {
+                // Fenêtre centrée sur la chaîne en cours (comme le zapping depuis « Tout » dans le Direct).
+                val c = channelDao.byRemoteId(pid, cur.remoteId)
+                when {
+                    c != null && c.catRank > 0 -> tr.lidertv.nativeapp.data.repo.LiveAllPagingSource.window(channelDao, c)
+                    c != null -> {
+                        // Repli (ordre pas encore précalculé) : même ordre, calculé par jointure.
+                        val rank = channelDao.orderedAllIdsLegacy(pid).indexOf(c.id).coerceAtLeast(0)
+                        channelDao.windowAllLegacy(pid, 401, (rank - 200).coerceAtLeast(0))
+                    }
+                    else -> channelDao.windowAllLegacy(pid, 401, 0)
+                }
+            }
+            else -> channelOrder.categoryWindow(pid, categoryId, null, 300)
+        }.filter { !it.junk && !it.isSeparator }
+        val entries = entriesFor(channels, null)
+        if (browser.pending.value != categoryId) return   // tiroir refermé ou autre catégorie demandée entre-temps
+        // Liste et catégorie changent ensemble : le titre ne passe pas à la nouvelle catégorie avec l'ancienne liste.
+        browsedEntries.value = entries
+        browsedCategory.value = categoryId
+    }
+
+    /** Totaux « Toutes les chaînes » et Favoris (colonne des catégories) ; relus à chaque ouverture du tiroir. */
+    data class DrawerTotals(val all: Int? = null, val favorites: Int = 0)
+    private val _totals = kotlinx.coroutines.flow.MutableStateFlow(DrawerTotals())
+    val drawerTotals: StateFlow<DrawerTotals> = _totals
+
+    fun refreshDrawerTotals() {
+        val pid = playback.current.value?.providerId ?: return
+        viewModelScope.launch {
+            _totals.value = DrawerTotals(
+                all = runCatching { channelDao.countLive(pid) }.getOrNull(),
+                favorites = runCatching { channelDao.countFavorites(pid, profiles.currentIdNow) }.getOrDefault(0),
+            )
+        }
+    }
+
+    fun resetBrowse() { browser.reset(); browsedCategory.value = null; browsedEntries.value = null }
+
+    suspend fun zapTo(channel: tr.lidertv.nativeapp.data.db.ChannelEntity): String? {
+        val browsed = browsedEntries.value
+        if (browsed == null) {
+            val s = zapQueue.state.value ?: return null
+            if (s.channels.none { it.id == channel.id }) return null
+        }
+        // La file ne change qu'après l'accord du code parental (chaîne verrouillée).
+        return guard.request(channel) {
+            if (browsed != null) zapQueue.set(browsed.map { it.channel }, channel)   // autre catégorie : la file devient cette catégorie
+            else zapQueue.state.value?.let { zapQueue.set(it.channels, channel) }
+            val resolved = channel.streamUrl
+            setLive(channel, resolved)
+            resolved
+        }
+    }
+
+    /**
+     * Zappe vers une chaîne de l'historique du profil (rangée « Chaînes récentes » de l'OSD). Dans la file en cours : [zapTo].
+     * Sinon la file devient la catégorie de la chaîne (comme le choix d'une catégorie dans la liste) ; le code parental est
+     * demandé de la même façon (ParentalGuard) pour une chaîne verrouillée.
+     */
+    suspend fun zapToRecent(channel: tr.lidertv.nativeapp.data.db.ChannelEntity): String? {
+        val inQueue = zapQueue.state.value?.channels?.any { it.id == channel.id } == true
+        if (inQueue && browsedEntries.value == null) return zapTo(channel)
+        val inCategory = channel.categoryId?.let { channelOrder.categoryWindow(channel.providerId, it, null, 300) }.orEmpty()
+        val list = if (inCategory.any { it.id == channel.id }) inCategory else listOf(channel) + inCategory
+        return guard.request(channel) { zapQueue.set(list, channel); setLive(channel, channel.streamUrl); channel.streamUrl }
+    }
+
+    /** Épisode suivant (saison suivante comprise) devenu l'élément courant ; null en fin de série ou hors épisode. */
+    suspend fun nextEpisode(): PlaybackContext.Item? = stepEpisode(1)
+
+    /** Épisode précédent (saison précédente comprise) devenu l'élément courant ; null au premier épisode ou hors épisode. */
+    suspend fun previousEpisode(): PlaybackContext.Item? = stepEpisode(-1)
+
+    /** (un épisode précède, un épisode suit) l'épisode en cours, sans changer l'élément courant. */
+    suspend fun episodeNeighbors(): Pair<Boolean, Boolean> {
+        val c = playback.current.value ?: return false to false
+        if (c.kind != "EPISODE") return false to false
+        val cur = episodeDao.byRemoteId(c.providerId, c.remoteId) ?: return false to false
+        val all = episodeDao.observeForSeries(cur.seriesId).first()
+        val i = all.indexOfFirst { it.id == cur.id }
+        return (i > 0) to (i >= 0 && i + 1 < all.size)
+    }
+
+    private suspend fun stepEpisode(delta: Int): PlaybackContext.Item? {
+        val c = playback.current.value ?: return null
+        if (c.kind != "EPISODE") return null
+        val cur = episodeDao.byRemoteId(c.providerId, c.remoteId) ?: return null
+        val all = episodeDao.observeForSeries(cur.seriesId).first()
+        val at = all.indexOfFirst { it.id == cur.id }
+        if (at < 0) return null
+        val nx = all.getOrNull(at + delta) ?: return null
+        val tag = "S${"%02d".format(java.util.Locale.ROOT, nx.season)}E${"%02d".format(java.util.Locale.ROOT, nx.episode)}"
+        val series = c.title.substringBefore(" · ")
+        val epTitle = tr.lidertv.nativeapp.ui.series.cleanEpisodeTitle(nx.title, series, series)
+        val item = c.copy(remoteId = nx.remoteId, title = listOf(series, tag, epTitle).filter { it.isNotBlank() }.joinToString(" · "), streamUrl = nx.streamUrl, poster = nx.image ?: c.poster)
+        playback.set(item)
+        return item
+    }
+
+    /** Passages à sauter (intro, rappel, générique) de l'élément en cours ; vide hors film / épisode ou si inconnu. */
+    suspend fun skipSegments(durationMs: Long): List<tr.lidertv.nativeapp.data.skip.SkipSegment> {
+        val c = playback.current.value ?: return emptyList()
+        return skips.forItem(c, durationMs)
+    }
+
+    /** Un épisode suit-il l'épisode en cours (saison suivante comprise) ? Sans changer l'élément courant. */
+    suspend fun hasNextEpisode(): Boolean {
+        val c = playback.current.value ?: return false
+        if (c.kind != "EPISODE") return false
+        val cur = episodeDao.byRemoteId(c.providerId, c.remoteId) ?: return false
+        val all = episodeDao.observeForSeries(cur.seriesId).first()
+        val i = all.indexOfFirst { it.id == cur.id }
+        return i >= 0 && i + 1 < all.size
+    }
+
+    suspend fun prepareResume(): Long {
+        val c = playback.current.value ?: return 0L
+        if (c.kind == "LIVE") return 0L
+        return history.resumePositionMs(c.providerId, c.kind, c.remoteId)
+    }
+
+    /** Scrobble Trakt (film / épisode seulement ; sans effet sur le direct). Jamais bloquant. */
+    fun scrobbleTick(playing: Boolean, positionMs: Long, durationMs: Long) = trakt.onTick(playback.current.value, playing, positionMs, durationMs)
+    fun scrobblePause(positionMs: Long, durationMs: Long) = trakt.onPause(playback.current.value, positionMs, durationMs)
+    fun scrobbleStop(positionMs: Long, durationMs: Long) = trakt.onStop(playback.current.value, positionMs, durationMs)
+
+    fun recordProgress(positionMs: Long, durationMs: Long) {
+        val c = playback.current.value ?: return
+        if (positionMs < 5_000 && c.kind != "LIVE") return
+        // NonCancellable : à la sortie du lecteur le ViewModel est détruit juste après onDispose et son viewModelScope annulé —
+        // la dernière position (celle qui alimente « Continuer à regarder ») pouvait être perdue avant d'être écrite.
+        viewModelScope.launch(kotlinx.coroutines.NonCancellable) {
+            history.record(
+                providerId = c.providerId, kind = c.kind, remoteId = c.remoteId, title = c.title, poster = c.poster, streamUrl = c.streamUrl,
+                positionMs = if (c.kind == "LIVE") 0 else positionMs, durationMs = if (c.kind == "LIVE") 0 else durationMs, parentRemoteId = c.parentRemoteId,
+            )
+        }
+    }
+
+    suspend fun streamProps(key: String) = channelDao.streamProps(key)
+
+    fun setEngine(v: String) { viewModelScope.launch { prefs.setPlayerEngine(v) } }
+    fun setDecoder(v: String) { viewModelScope.launch { prefs.setDecoderMode(v) } }
+}
+
+private enum class Panel { None, Options, Tracks, Subtitles }
+
+/** Onglets du panneau de réglages (maquette LecteurReglages). */
+private enum class SideTab { TRACKS, DISPLAY, PLAYER, STATS }
+
+/**
+ * Lecteur (maquette Lecteur.dc.html). La surcouche est la même quel que soit le moteur (Media3 / LibVLC) :
+ * en-tête (badge EN DIRECT, chaîne, programme, heure), pied (progression, pause 96 px focalisée, pilules).
+ * Elle disparaît après 5 s d'inactivité. Aucune URL n'est jamais affichée, ni dans l'interface ni dans les messages d'erreur.
+ */
+@OptIn(UnstableApi::class)
+@Composable
+fun PlayerScreen(url: String, title: String, onBack: () -> Unit, onHome: (() -> Unit)? = null, onNavigate: ((String) -> Unit)? = null, vm: PlayerViewModel = hiltViewModel()) {
+    // Le lecteur reste sombre quel que soit le thème de l'application.
+    val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val D = LocalDs.current
+    val S = LocalStrings.current
+    val item by vm.current.collectAsState()
+    val isLive = item?.kind == "LIVE"
+    val prefs by vm.prefsFlow.collectAsState(initial = null)
+    val p = prefs ?: run { Box(Modifier.fillMaxSize().background(Color.Black)); return }
+
+    var currentUrl by remember { mutableStateOf(url) }
+    var panel by remember { mutableStateOf(Panel.None) }
+    var drawerOpen by remember { mutableStateOf(false) }
+    var infoOpen by remember { mutableStateOf(false) }
+    var overlayVisible by remember { mutableStateOf(true) }
+    var lastInteraction by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var aspect by remember { mutableStateOf(AspectMode.FIT) }
+    var speed by remember { mutableStateOf(1f) }
+    var statsOpen by remember { mutableStateOf(false) }
+    // Tactile : orientation, gestes et niveaux (luminosité / volume).
+    val touch = tr.lidertv.nativeapp.ui.mobile.LocalTouch.current
+    val M = tr.lidertv.nativeapp.ui.mobile.LocalMobileStrings.current
+    val portrait = touch && androidx.compose.ui.platform.LocalConfiguration.current.let { it.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT }
+    val levels = remember { tr.lidertv.nativeapp.ui.mobile.PlayerLevels(context) }
+    var hud by remember { mutableStateOf<tr.lidertv.nativeapp.ui.mobile.GestureHud?>(null) }
+    var dragStartLevel by remember { mutableStateOf(0f) }
+    var lockedLandscape by remember { mutableStateOf(false) }
+    LaunchedEffect(hud) { if (hud != null) { delay(900); hud = null } }
+    if (touch) {
+        tr.lidertv.nativeapp.ui.mobile.ImmersiveWhen(fullscreen = !portrait)
+        DisposableEffect(Unit) { onDispose { levels.resetBrightness(); context.lockOrientation(null) } }
+        LaunchedEffect(portrait) { lockedLandscape = !portrait && lockedLandscape }
+    }
+    var sleepDeadline by remember { mutableLongStateOf(0L) }
+    val latestPrefs by androidx.compose.runtime.rememberUpdatedState(p)
+
+    // [B2·sous-titres] style, langues préférées (DataStore) et recherche en ligne.
+    val subVm: tr.lidertv.nativeapp.ui.player.subtitles.SubtitleViewModel = hiltViewModel()
+    val touchUi = tr.lidertv.nativeapp.ui.mobile.LocalTouch.current
+    // Direct ouvert depuis la liste : la session de l'aperçu est REPRISE (même moteur ; si l'aperçu jouait déjà cette
+    // chaîne, son flux continue sans rechargement). Ouvert d'ailleurs : session propre, tout aperçu restant est fermé.
+    val shared = tr.lidertv.nativeapp.ui.player.engine.LocalSharedLive.current
+    val adoption = remember {
+        if (shared == null) null
+        else if (isLive) shared.adopt(item?.let { "${it.providerId}:${it.remoteId}" })
+        else { shared.stop(); null }
+    }
+    if (adoption != null && shared != null) shared.env = remember {
+        tr.lidertv.nativeapp.ui.player.engine.LiveEnv(
+            settings = { vm.resolved(latestPrefs) }, subtitles = { subVm.current },
+            uiLanguage = { if (latestPrefs.language == "system") java.util.Locale.getDefault().language else latestPrefs.language },
+        )
+    }
+    // Retour vers la liste : la session est rendue à l'aperçu (sans rechargement) si c'est encore le vrai direct.
+    val handBack = remember { booleanArrayOf(false) }
+    val container = remember { adoption?.session?.container ?: FrameLayout(context).apply { setBackgroundColor(android.graphics.Color.BLACK) } }
+    val session = remember {
+        adoption?.session ?: PlaybackSession(
+            ctx = context, scope = scope, container = container,
+            settings = { vm.resolved(latestPrefs) }, memory = vm.memory, network = vm.network,
+            isLive = isLive, autoFrameRate = p.autoFrameRate, userAgent = "LiderTv/1.0 (Android TV)",
+            opener = { u -> tr.lidertv.nativeapp.data.stalker.StreamUrls.open(context, u) },
+            presence = { u -> tr.lidertv.nativeapp.data.stalker.StreamUrls.presence(context, u) },   // stalker:// : lien + en-têtes MAG à chaque ouverture
+            textureView = tr.lidertv.nativeapp.ui.player.engine.useTextureView(p.videoSurface, touchUi),
+            subtitles = { subVm.current },
+            uiLanguage = { if (latestPrefs.language == "system") java.util.Locale.getDefault().language else latestPrefs.language },
+            propsLookup = { k -> vm.streamProps(k) },
+        )
+    }
+    val state by session.state.collectAsState()
+    // Quitter le lecteur : la vidéo est une couche à part (SurfaceView) qui restait affichée jusqu'à la destruction de
+    // l'écran — après la composition de l'écran suivant et la libération du moteur. On la met en pause et on la MASQUE
+    // tout de suite, puis on quitte (la libération se fait ensuite, dans onDispose).
+    // [finish] : ce qui suit la sortie (Retour : onBack ; raccourci de l'OSD : onNavigate, qui ferme le lecteur puis ouvre la route).
+    val leaveThen: (() -> Unit) -> Unit = leave@{ finish ->
+        if (handBack[0] && shared != null) { shared.demote(); finish(); return@leave }
+        session.engine?.pause()
+        session.container.visibility = android.view.View.INVISIBLE
+        finish()
+    }
+    val leave: () -> Unit = { leaveThen(onBack) }
+    // Liste des chaînes (OK) maintenue À JOUR pendant toute la lecture du direct : abonnée seulement à l'ouverture du
+    // tiroir, elle relisait la file, son guide et les compteurs de catégories à chaque OK (tiroir vide un moment).
+    // Collecte sans lecture de valeur : aucune recomposition du lecteur.
+    // Préparée 1,5 s APRÈS la première image : pas de lecture de la base pendant le démarrage du flux.
+    if (isLive) LaunchedEffect(Unit) {
+        androidx.compose.runtime.snapshotFlow { state.phase }.first { it == Phase.PLAYING }
+        delay(1_500)
+        launch { vm.queue.collect {} }
+        launch { vm.categories.collect {} }
+    }
+    // [B2·zapping] saisie du numéro, chaîne précédente, récentes (ZapViewModel).
+    val zap: tr.lidertv.nativeapp.ui.player.zap.ZapViewModel = hiltViewModel()
+    val X = tr.lidertv.nativeapp.ui.player.playerExtras()
+    // Code parental : une chaîne verrouillée n'est lancée qu'après le code (zapping, numéro, liste, télécommande du téléphone).
+    val pinPending by vm.guard.pending.collectAsState()
+    DisposableEffect(Unit) { onDispose { vm.guard.endSession() } }
+    val zapPreview by zap.preview.collectAsState()
+    val zapRecent by zap.recent.collectAsState()
+    LaunchedEffect(item) { zap.onPlaying(item) }
+    LaunchedEffect(zapPreview != null) { if (zapPreview != null) zap.loadRecent() }
+    // [B2·timeshift] pause du direct : tampon disque via un relais local (une seule connexion fournisseur).
+    val ts: tr.lidertv.nativeapp.ui.player.timeshift.TimeshiftViewModel = hiltViewModel()
+    var tsActive by remember { mutableStateOf(false) }
+    var tsSnap by remember { mutableStateOf<tr.lidertv.nativeapp.ui.player.timeshift.TimeshiftSnapshot?>(null) }
+    var liveUrlBeforeTs by remember { mutableStateOf<String?>(null) }
+    var pendingPause by remember { mutableStateOf(false) }
+    fun startTimeshift() {
+        if (state.isProtected) { Toaster.show(X.tsHls); return }   // flux protégé : jamais relayé par le tampon local
+        when (ts.support(currentUrl)) {
+            tr.lidertv.nativeapp.ui.player.timeshift.TimeshiftSupport.OK -> {
+                val live = currentUrl
+                val pidTs = item?.providerId
+                // Avec une seule connexion, le flux direct est fermé AVANT d'ouvrir celle du relais ; avec 2 ou plus, on peut enchaîner sans trou.
+                if (pidTs == null || ts.maxConnections(pidTs) <= 1) session.release()
+                if (pidTs != null) scope.launch { if (ts.connectionConflict(pidTs)) Toaster.show(D.recConnectionBusy) }
+                ts.activate(live, "LiderTv/1.0 (Android TV)")?.let { liveUrlBeforeTs = live; tsActive = true; pendingPause = true; currentUrl = it }
+                    ?: run { session.start(live, item?.let { "${it.providerId}:${it.remoteId}" }, 0) }
+            }
+            tr.lidertv.nativeapp.ui.player.timeshift.TimeshiftSupport.NO_SPACE -> Toaster.show(X.tsNoSpace)
+            else -> Toaster.show(X.tsHls)
+        }
+    }
+    fun tsJump(sec: Int) { ts.jump(sec)?.let { currentUrl = it } }
+    fun tsBackToLive() { ts.goLive()?.let { currentUrl = it; pendingPause = false } }
+    LaunchedEffect(state.phase) {
+        if (!tsActive) return@LaunchedEffect
+        if (state.phase == Phase.PLAYING && pendingPause) { session.engine?.pause(); pendingPause = false }
+        if (state.phase == Phase.ERROR || state.phase == Phase.ENDED) {
+            ts.deactivate(); tsActive = false; tsSnap = null; Toaster.show(X.tsFailed)
+            liveUrlBeforeTs?.let { currentUrl = it }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            session.engine?.let { vm.recordProgress(it.positionMs, it.durationMs.coerceAtLeast(0)); vm.scrobbleStop(it.positionMs, it.durationMs.coerceAtLeast(0)) }
+            // Session reprise de l'aperçu : rendue (Retour) ou libérée (toute autre sortie) par la session partagée.
+            if (adoption != null && shared != null) shared.onFullscreenGone() else session.release()
+            ts.deactivate()
+        }
+    }
+    // Épisode terminé : marqué vu, puis l'épisode suivant démarre (Réglages › Lecture › Épisode suivant automatique).
+    LaunchedEffect(state.phase) {
+        if (state.phase != Phase.ENDED || isLive || item?.kind != "EPISODE" || !latestPrefs.autoPlayNextEpisode) return@LaunchedEffect
+        session.engine?.let { e -> val d = e.durationMs.coerceAtLeast(0); if (d > 0) { vm.recordProgress(d, d); vm.scrobbleStop(d, d) } }
+        vm.nextEpisode()?.let { currentUrl = it.streamUrl }
+    }
+    // Application quittée (Accueil, autre appli, veille) hors image dans l'image : plus de son en arrière-plan.
+    // Au retour, le direct repart au bord du direct ; un film reprend où il en était.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        var stoppedByApp = false
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev ->
+            when (ev) {
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                    val inPip = (context as? android.app.Activity)?.isInPictureInPictureMode == true
+                    if (!inPip) session.engine?.let { e -> vm.recordProgress(e.positionMs, e.durationMs.coerceAtLeast(0)); vm.scrobblePause(e.positionMs, e.durationMs.coerceAtLeast(0)); e.pause(); stoppedByApp = true }
+                }
+                androidx.lifecycle.Lifecycle.Event.ON_START -> if (stoppedByApp) {
+                    stoppedByApp = false
+                    if (isLive && !tsActive) session.retry() else session.engine?.play()
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+    LaunchedEffect(Unit) {
+        session.notices.collect { n ->
+            Toaster.show(when (n) { Notice.USING_VLC -> D.noticeVlc; Notice.USING_EXO -> D.noticeExo; Notice.USING_SOFTWARE -> D.noticeSoftware; Notice.RETRYING -> D.noticeRetry })
+        }
+    }
+    // Aperçu promu : le flux de l'URL d'ouverture joue déjà — aucun `start` (ni arrêt, ni rechargement).
+    val skipFirstStart = remember { booleanArrayOf(adoption?.playing == true) }
+    if (adoption != null && shared != null) LaunchedEffect(item?.remoteId) { shared.onFullscreenChannel(item?.let { "${it.providerId}:${it.remoteId}" }) }
+    LaunchedEffect(currentUrl) {
+        val it = vm.current.value
+        val resume = vm.prepareResume()
+        subVm.ensureLoaded()
+        if (tsActive && !ts.isLocalUrl(currentUrl)) { ts.deactivate(); tsActive = false; tsSnap = null }   // [B2·timeshift] autre chaîne : le relais lâche la connexion d'abord
+        if (skipFirstStart[0]) { skipFirstStart[0] = false; if (currentUrl == url) return@LaunchedEffect }
+        // [téléchargements] film / épisode téléchargé : fichier local (file://) à la place du flux.
+        session.start(tr.lidertv.nativeapp.data.downloads.OfflineMedia.resolve(it, currentUrl), it?.let { x -> "${x.providerId}:${x.remoteId}" }, resume)   // stalker:// : la session demande le lien à chaque ouverture
+    }
+    // Progression enregistrée toutes les 10 s (« Reprendre la lecture »).
+    // (La progression VOD est enregistrée toutes les 30 s par la boucle de la surcouche ; plus de doublon à 10 s.)
+    // Minuterie de sommeil.
+    LaunchedEffect(sleepDeadline) {
+        if (sleepDeadline <= 0L) return@LaunchedEffect
+        while (System.currentTimeMillis() < sleepDeadline) delay(5_000)
+        session.engine?.pause(); onBack()
+    }
+    // [B2·replay] « Depuis le début » sur le programme en cours ; l'URL (identifiants inclus) n'est jamais affichée.
+    val replayVm: tr.lidertv.nativeapp.ui.player.replay.ReplayViewModel = hiltViewModel()
+    val nowProg by vm.nowProgramme.collectAsState()
+    // Replay lancé depuis le guide (« Revoir ») : on reprend le programme pour que le repli d'URL fonctionne aussi.
+    val guideReplay = remember { replayVm.takePending() }
+    var replayProg by remember { mutableStateOf<EpgEntity?>(guideReplay?.first) }
+    var liveUrlBeforeReplay by remember { mutableStateOf<String?>(null) }
+    // Reconnexion automatique : vrai direct seulement (pas un replay « Depuis le début » ni le relais du différé).
+    // SideEffect : appliqué à chaque composition, avant le démarrage du lancement (LaunchedEffect(currentUrl)).
+    androidx.compose.runtime.SideEffect {
+        session.liveReconnect = replayProg == null && !tsActive
+        // Vrai direct sans différé ni replay, sans erreur : Retour rend la chaîne à l'aperçu de la liste.
+        handBack[0] = adoption != null && isLive && !tsActive && replayProg == null && state.phase != Phase.ERROR
+    }
+    var canReplay by remember { mutableStateOf(false) }
+    LaunchedEffect(nowProg?.id) { canReplay = replayVm.canReplay(nowProg) }
+    LaunchedEffect(item?.remoteId) { if (replayProg !== guideReplay?.first) replayProg = null }
+    LaunchedEffect(state.phase) {
+        val rp = replayProg ?: return@LaunchedEffect
+        val pid = item?.providerId ?: guideReplay?.second ?: return@LaunchedEffect
+        if (state.phase == Phase.PLAYING) replayVm.worked(pid)
+        else if (state.phase == Phase.ERROR) replayVm.retryUrl(rp, pid)?.let { currentUrl = it }
+    }
+    // [B2·veille] minuterie de la pilule « Veille » : « Toujours là ? » 1 min avant, puis arrêt (flux fermé) et accueil.
+    val sleepTimer = remember { tr.lidertv.nativeapp.ui.player.sleep.SleepTimer() }
+    var sleepPhase by remember { mutableStateOf(tr.lidertv.nativeapp.ui.player.sleep.SleepPhase.IDLE) }
+    var sleepLeft by remember { mutableStateOf(0) }
+    var sleepMenu by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            val now = System.currentTimeMillis()
+            sleepPhase = sleepTimer.phase(now); sleepLeft = sleepTimer.secondsLeft(now)
+            if (sleepPhase == tr.lidertv.nativeapp.ui.player.sleep.SleepPhase.EXPIRED) {
+                sleepTimer.cancel()
+                session.release()      // libère la connexion unique du fournisseur
+                (onHome ?: onBack)()
+                break
+            }
+            delay(1_000)
+        }
+    }
+    // Position / durée / horloge (500 ms) ; masquage de la surcouche après 5 s sans action.
+    var pos by remember { mutableLongStateOf(0L) }
+    var dur by remember { mutableLongStateOf(-1L) }
+    // Passer l'intro / le rappel / le générique (TheIntroDB) : passages chargés une fois la durée connue, par élément.
+    // Rien n'est jamais sauté sans l'utilisateur : un bouton s'affiche pendant le passage, OK (ou un appui) l'exécute.
+    var skipSegs by remember { mutableStateOf(emptyList<tr.lidertv.nativeapp.data.skip.SkipSegment>()) }
+    var skipHasNext by remember { mutableStateOf(false) }
+    val skipDurKnown = dur > 0
+    LaunchedEffect(item?.remoteId, skipDurKnown) {
+        skipSegs = emptyList(); skipHasNext = false
+        if (isLive || !skipDurKnown || (item?.kind != "MOVIE" && item?.kind != "EPISODE")) return@LaunchedEffect
+        skipHasNext = vm.hasNextEpisode()
+        skipSegs = vm.skipSegments(dur)
+    }
+    // derivedStateOf : la position change chaque seconde, mais l'écran n'est recomposé que si l'OFFRE change (apparition /
+    // disparition du bouton), pas à chaque seconde de lecture.
+    val skipOfferState = remember {
+        androidx.compose.runtime.derivedStateOf {
+            if (item?.kind == "LIVE" || skipSegs.isEmpty() || state.phase != Phase.PLAYING) null
+            else tr.lidertv.nativeapp.data.skip.SkipSegmentsLogic.offerAt(skipSegs, pos, dur, item?.kind == "EPISODE", skipHasNext)
+        }
+    }
+    val skipOffer = skipOfferState.value
+    val doSkip: () -> Unit = {
+        val o = skipOffer
+        if (o != null && o.toNextEpisode) scope.launch {
+            session.engine?.let { e -> val d = e.durationMs.coerceAtLeast(0); if (d > 0) { vm.recordProgress(d, d); vm.scrobbleStop(d, d) } }
+            vm.nextEpisode()?.let { currentUrl = it.streamUrl }
+        } else o?.targetMs?.let { t -> session.engine?.seekTo(t); pos = t / 1_000 * 1_000 }
+    }
+    // Pastilles techniques (film / épisode) : calculées à l'affichage de la surcouche et à chaque changement de flux ou de
+    // moteur, jamais en continu. Deux relectures après la première image (les statistiques audio arrivent un peu plus tard).
+    var badges by remember { mutableStateOf(TechBadges.EMPTY) }
+    LaunchedEffect(currentUrl) { badges = TechBadges.EMPTY }
+    LaunchedEffect(currentUrl, overlayVisible, state.phase, state.combo) {
+        if (isLive || !overlayVisible || state.phase != Phase.PLAYING) return@LaunchedEffect
+        repeat(3) {
+            val b = VodOverlayLogic.badges(session.engine?.stats())
+            if (!b.isEmpty && b != badges) badges = b
+            if (b.quality != null && b.codec != null && b.audio != null) return@LaunchedEffect
+            delay(1_500)
+        }
+    }
+    var epNav by remember { mutableStateOf(false to false) }
+    LaunchedEffect(item?.remoteId) { epNav = if (item?.kind == "EPISODE") vm.episodeNeighbors() else (false to false) }
+    var playing by remember { mutableStateOf(true) }
+    var clock by remember { mutableStateOf(EpgClock.wall(System.currentTimeMillis())) }
+    // Délai de masquage de la surcouche : 5 s pour le bandeau, 8 s pour l'OSD complet du direct (trois étages à lire).
+    var hideAfterMs by remember { mutableStateOf(OSD_HIDE_BANNER_MS) }
+    LaunchedEffect(Unit) {
+        var lastSave = System.currentTimeMillis()
+        while (true) {
+            // Position écrite seulement en VOD (le direct affiche l'horaire du programme) et arrondie à la seconde :
+            // chaque écriture recompose tout le lecteur — avant, 2 fois par seconde y compris en direct.
+            session.engine?.let { e -> if (!isLive) { pos = e.positionMs / 1_000 * 1_000; dur = e.durationMs }; playing = e.isPlaying; vm.remoteBus.setPlaying(e.isPlaying); if (!isLive) vm.scrobbleTick(e.isPlaying, e.positionMs, e.durationMs.coerceAtLeast(0)) }
+            // Film / épisode : position enregistrée toutes les 30 s (box éteinte ou appli fermée en force : la reprise tient).
+            if (!isLive && playing && System.currentTimeMillis() - lastSave > 30_000) { lastSave = System.currentTimeMillis(); session.engine?.let { vm.recordProgress(it.positionMs, it.durationMs.coerceAtLeast(0)) } }
+            clock = EpgClock.wall(System.currentTimeMillis())
+            if (tsActive) tsSnap = ts.snapshot()
+            if (overlayVisible && panel == Panel.None && !drawerOpen && System.currentTimeMillis() - lastInteraction > hideAfterMs) overlayVisible = false
+            delay(500)
+        }
+    }
+    // Pas de veille ni d'économiseur d'écran pendant la lecture (la box s'endormait au milieu d'un épisode).
+    val activity = context as? android.app.Activity
+    androidx.compose.runtime.DisposableEffect(playing, state.phase) {
+        val keep = playing || state.phase == Phase.LOADING
+        activity?.window?.let { w -> if (keep) w.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) else w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+        onDispose { activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
+    LaunchedEffect(aspect) { session.engine?.setAspect(aspect) }
+    LaunchedEffect(speed) { session.engine?.setSpeed(speed) }
+    LaunchedEffect(state.combo, state.phase) { session.engine?.setAspect(aspect) }
+
+    fun touch() { lastInteraction = System.currentTimeMillis(); overlayVisible = true }
+    // Télécommande sur le téléphone : pause, sauts et zapping demandés par la page web locale (voir data/remote).
+    val onRemote by androidx.compose.runtime.rememberUpdatedState<(tr.lidertv.nativeapp.data.remote.RemoteAction) -> Unit> { a ->
+        when (a) {
+            is tr.lidertv.nativeapp.data.remote.RemoteAction.PlayPause ->
+                if (isLive && replayProg == null && !tsActive) startTimeshift() else session.engine?.let { if (it.isPlaying) it.pause() else it.play() }
+            is tr.lidertv.nativeapp.data.remote.RemoteAction.Seek ->
+                if (tsActive) tsJump((a.deltaMs / 1_000).toInt())
+                else if (!isLive) session.engine?.let { it.seekTo(tr.lidertv.nativeapp.ui.mobile.seekTarget(it.positionMs, a.deltaMs, it.durationMs)) }
+            is tr.lidertv.nativeapp.data.remote.RemoteAction.Zap -> if (isLive) scope.launch { vm.zap(a.forward)?.let { currentUrl = it } }
+            is tr.lidertv.nativeapp.data.remote.RemoteAction.Key -> Unit      // gérées par l'activité principale
+        }
+        touch()
+    }
+    LaunchedEffect(Unit) { vm.remoteBus.actions.collect { onRemote(it) } }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.remoteBus.setPlaying(null) } }
+    // Épisode précédent / suivant (boutons de la surcouche) : la position atteinte est enregistrée avant de changer.
+    fun stepEpisode(delta: Int) {
+        scope.launch {
+            session.engine?.let { e -> vm.recordProgress(e.positionMs, e.durationMs.coerceAtLeast(0)); vm.scrobbleStop(e.positionMs, e.durationMs.coerceAtLeast(0)) }
+            (if (delta > 0) vm.nextEpisode() else vm.previousEpisode())?.let { currentUrl = it.streamUrl }
+            touch()
+        }
+    }
+    // Direct : la surcouche sert d'abord de BANDEAU (étage haut de l'OSD : chaîne, programme) ; Haut zappe, OK ou Bas ouvrent
+    // l'OSD complet (récents + barre de contrôles, focus sur la barre ; voir LiveOsdLogic.decide). Gauche/Droite/Menu/Info
+    // l'ouvrent aussi. Sans cette séparation, le 1er zap affichait les commandes et la touche suivante y déplaçait le focus
+    // (plus de zapping, OK = pause).
+    var controlsEngaged by remember { mutableStateOf(false) }
+    LaunchedEffect(overlayVisible) { if (!overlayVisible) controlsEngaged = false }
+    LaunchedEffect(controlsEngaged, isLive) { hideAfterMs = if (isLive && controlsEngaged) OSD_HIDE_FULL_MS else OSD_HIDE_BANNER_MS }
+    // OSD complet à la télécommande ; étage qui porte le focus (Retour : récents → barre → fermeture).
+    val osdOpen = isLive && overlayVisible && controlsEngaged
+    var osdStage by remember { mutableStateOf(OsdStage.CONTROLS) }
+    val osdFocus = remember { LiveOsdFocus() }
+    val osdBack = if (isLive) LiveOsdLogic.backEffect(osdOpen, osdStage, state.phase == Phase.PLAYING) else LiveOsdLogic.BackEffect.NOT_OSD
+    // Historique du profil relu à l'ouverture de l'OSD (télécommande : OSD complet ; tactile : surcouche visible).
+    val osdShown = isLive && overlayVisible && (controlsEngaged || touch)
+    LaunchedEffect(osdShown) { if (osdShown) zap.loadRecent() }
+    BackHandler {
+        when {
+            zap.isEntering -> zap.cancelEntry()
+            pinPending != null -> vm.guard.cancel()
+            infoOpen -> infoOpen = false
+            // Retour ferme ce qui est ouvert puis QUITTE le lecteur (retour au menu). Il ne ramène plus à la chaîne
+            // précédente : touche « chaîne précédente » de la télécommande pour cela (KEYCODE_LAST_CHANNEL).
+            panel != Panel.None -> panel = Panel.None
+            drawerOpen -> drawerOpen = false
+            // Direct, OSD ouvert : Retour dans les récents ramène le focus sur la barre ; dans la barre, il ferme l'OSD.
+            osdBack == LiveOsdLogic.BackEffect.FOCUS_CONTROLS -> { touch(); runCatching { osdFocus.bar.requestFocus() } }
+            osdBack == LiveOsdLogic.BackEffect.CLOSE_OSD -> overlayVisible = false
+            // Direct : seul l'OSD complet se referme d'abord ; le simple bandeau d'information affiché après un zap
+            // ne retient pas Retour (Retour quitte alors le lecteur, voir l'issue #30).
+            !isLive && overlayVisible && state.phase == Phase.PLAYING -> overlayVisible = false
+            else -> leave()
+        }
+    }
+    val rootFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { rootFocus.requestFocus() }
+    // OSD refermé : le focus revient à la racine, où les touches du Direct sont lues.
+    LaunchedEffect(osdOpen, isLive, state.phase == Phase.ERROR) { if (LiveOsdLogic.shouldRestoreRootFocus(isLive, osdOpen, state.phase == Phase.ERROR)) runCatching { rootFocus.requestFocus() } }
+    // Focus de la barre de l'OSD : posé par LiveOsd lui-même, APRÈS sa composition (réessayé quelques images, la demande échoue
+    // tant que le bouton n'est pas attaché), y compris à l'ouverture par OK / Bas depuis le bandeau.
+    val pauseFocus = remember { FocusRequester() }
+    LaunchedEffect(overlayVisible) { if (overlayVisible && panel == Panel.None) runCatching { pauseFocus.requestFocus() } }
+
+    // ── OSD du Direct (ui/player/osd) : boutons de la barre, récents, favori ; partagés par la TV et le tactile paysage.
+    val togglePlay: () -> Unit = {
+        if (isLive && replayProg == null && !tsActive) startTimeshift() else session.engine?.let { if (it.isPlaying) it.pause() else it.play() }
+        touch()
+    }
+    val toggleReplay: () -> Unit = {
+        val rp = replayProg
+        if (rp != null) { liveUrlBeforeReplay?.let { currentUrl = it }; replayProg = null }
+        else nowProg?.let { np -> scope.launch { replayVm.urlFor(np)?.let { u -> liveUrlBeforeReplay = currentUrl; replayProg = np; currentUrl = u } } }
+        touch()
+    }
+    val O = liveOsdStrings()
+    val osdLabels = remember(O, D, X, S) { O.labels(D, X, S) }
+    val isFavNow by vm.isFavoriteNow.collectAsState()
+    val pipSupported = remember { context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE) }
+    val currentKey = item?.let { "${it.providerId}:${it.remoteId}" }
+    val osdRecents = remember(zapRecent, currentKey, item?.title) {
+        OsdModel.recents(zapRecent.map { OsdRecent("${it.channel.providerId}:${it.channel.remoteId}", it.channel.logo, it.number.takeIf { n -> n > 0 }, it.channel.title, it.now) }, currentKey, item?.title)
+    }
+    val osdActions = if (!isLive) emptyList() else OsdActions.build(
+        OsdActionInputs(
+            playing = playing, tsActive = tsActive, isFavorite = isFavNow, aspect = aspect,
+            // Différé : « Retour au direct » ; sinon « Depuis le début » / « Retour au direct » du replay.
+            replayLabel = if (tsActive) X.backToLive else if (replayProg != null) X.backToLive else if (canReplay) X.fromStart else null,
+            replayActive = tsActive || replayProg != null,
+            sleepActive = sleepPhase != tr.lidertv.nativeapp.ui.player.sleep.SleepPhase.IDLE || sleepDeadline > 0,
+            pipSupported = pipSupported, shortcuts = onNavigate != null,
+        ),
+        osdLabels,
+    )
+    // Raccourcis (Ma liste, Films…) : le lecteur se ferme (même sortie que Retour) puis la route s'ouvre.
+    val navigateTo: (String) -> Unit = { route -> onNavigate?.let { go -> leaveThen { go(route) } } }
+    val onOsdAction: (OsdActionId) -> Unit = { id ->
+        touch()
+        when (id) {
+            OsdActionId.PLAY_PAUSE -> togglePlay()
+            OsdActionId.JUMP_BACK -> tsJump(-LiveOsdLogic.TIMESHIFT_JUMP_SEC)
+            OsdActionId.JUMP_FORWARD -> tsJump(LiveOsdLogic.TIMESHIFT_JUMP_SEC)
+            OsdActionId.AUDIO -> panel = Panel.Tracks
+            OsdActionId.SUBS -> panel = Panel.Subtitles
+            OsdActionId.ASPECT -> aspect = LiveOsdLogic.nextAspect(aspect)        // même état que le panneau Lecteur
+            OsdActionId.CHANNELS -> drawerOpen = true
+            // Historique : pas d'écran « regardé récemment » pour le Direct ; on place le focus sur la rangée des chaînes récentes.
+            OsdActionId.HISTORY -> if (osdRecents.isNotEmpty()) runCatching { osdFocus.recents.requestFocus() } else Toaster.show(O.historyEmpty)
+            OsdActionId.FAVORITE -> vm.toggleFavorite()
+            OsdActionId.RECORD -> vm.recordLive(120, S.recordingQueuedTemplate)
+            OsdActionId.PIP -> if (!context.enterPip()) Toaster.show(M.pipUnavailable)
+            OsdActionId.REPLAY -> if (tsActive) tsBackToLive() else toggleReplay()
+            OsdActionId.SLEEP -> sleepMenu = true
+            OsdActionId.PLAYER -> panel = Panel.Options
+            else -> OsdActions.routeOf(id)?.let(navigateTo)
+        }
+    }
+    val onOsdRecent: (String) -> Unit = { key ->
+        zapRecent.firstOrNull { "${it.channel.providerId}:${it.channel.remoteId}" == key }?.let { r ->
+            touch(); controlsEngaged = false
+            scope.launch { vm.zapToRecent(r.channel)?.let { currentUrl = it } }
+        }
+    }
+    // Étage haut : programme du guide (ou nom de la chaîne), fenêtre du différé, horloge.
+    val osdNext by vm.nextProgramme.collectAsState()
+    val osdChannelNumber = if (isLive) vm.queue.collectAsState().value.firstOrNull { it.isCurrent }?.channel?.let { tr.lidertv.nativeapp.ui.player.zap.ZapLogic.numberOf(it) }?.takeIf { it > 0 } else null
+    val osdState = if (!isLive) null else {
+        val snap = tsSnap?.takeIf { tsActive }
+        val nowMs = System.currentTimeMillis()
+        LiveOsdState(
+            channel = OsdChannelInfo(item?.poster, osdChannelNumber, item?.title ?: title, item?.badge),
+            programme = OsdModel.programme(
+                nowProg, osdNext, nowMs, X.thenWord,
+                tsWindow = snap?.let { OsdProgress(EpgClock.wall(nowMs - it.windowSec * 1000L), EpgClock.wall(nowMs), it.fraction, directMark = X.directMark) },
+                remaining = O::remaining, hm = EpgClock::hm, range = EpgClock::range,
+            ),
+            badge = snap?.let { OsdBadge(X.delayed + " · " + tr.lidertv.nativeapp.ui.player.timeshift.behindLabel(it.behindSec), true) } ?: OsdBadge(D.live, false),
+            clock = clock, actions = osdActions, recents = osdRecents, recentsTitle = O.recentChannels,
+            expanded = controlsEngaged || touch, hint = O.bannerHint,
+        )
+    }
+
+    Box(
+        Modifier.fillMaxSize().background(Color.Black).focusRequester(rootFocus).androidx_focusable()
+            .onPreviewKeyEvent { ev ->
+                if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // Retour n'est JAMAIS consommé ici : c'est le BackHandler qui ferme ce qui est ouvert puis quitte le lecteur.
+                // Avant, commandes masquées (film / épisode), Retour servait à les afficher : l'appui « Down » consommé, Android 11
+                // et antérieurs ne déclenchaient jamais le retour ; la touche suivante masquait les commandes, et ainsi de suite
+                // (impossible de quitter le lecteur, issue #30). Android 13+ rattrapait le cas au niveau de la fenêtre.
+                if (ev.key == Key.Back || ev.key == Key.Escape) return@onPreviewKeyEvent false
+                // Fenêtre de code ou fiche programme ouverte : elles gèrent leurs propres touches.
+                if (pinPending != null || infoOpen) return@onPreviewKeyEvent false
+                // Panneau d'erreur affiché : ses boutons (Réessayer, Chaîne suivante, Fermer) reçoivent les touches. Avant, le
+                // direct les interceptait (Bas zappait, Gauche/Droite « engageaient » des commandes masquées, OK ouvrait la liste) :
+                // aucun bouton n'était sélectionnable à la télécommande.
+                if (state.phase == Phase.ERROR && panel == Panel.None && !drawerOpen) return@onPreviewKeyEvent false
+                // Touches média de la télécommande.
+                when (ev.key) {
+                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
+                        touch()
+                        val eng = session.engine
+                        val wantPause = ev.key == Key.MediaPause || (ev.key == Key.MediaPlayPause && eng?.isPlaying != false)
+                        val wantPlay = ev.key == Key.MediaPlay || (ev.key == Key.MediaPlayPause && !wantPause)
+                        if (wantPause) { if (isLive && replayProg == null && !tsActive) startTimeshift() else eng?.pause() }
+                        else if (wantPlay && eng != null && !eng.isPlaying) eng.play()
+                        return@onPreviewKeyEvent true
+                    }
+                    Key.MediaFastForward, Key.MediaRewind -> {
+                        touch()
+                        val fwd = ev.key == Key.MediaFastForward
+                        if (tsActive) tsJump(if (fwd) 30 else -30)
+                        else if (!isLive) session.engine?.let { it.seekTo(tr.lidertv.nativeapp.ui.mobile.seekTarget(it.positionMs, if (fwd) 10_000L else -10_000L, it.durationMs)) }
+                        return@onPreviewKeyEvent true
+                    }
+                    Key.MediaNext, Key.MediaPrevious -> {
+                        touch()
+                        val fwd = ev.key == Key.MediaNext
+                        if (isLive) scope.launch { vm.zap(fwd)?.let { currentUrl = it } }
+                        else if (if (fwd) epNav.second else epNav.first) stepEpisode(if (fwd) 1 else -1)
+                        return@onPreviewKeyEvent true
+                    }
+                    Key.Info -> if (panel == Panel.None && !drawerOpen) { touch(); infoOpen = true; return@onPreviewKeyEvent true }
+                    else -> Unit
+                }
+                // [B2·zapping] chiffres 0-9 / pavé numérique, OK valide la saisie.
+                if (isLive && panel == Panel.None && !drawerOpen) {
+                    tr.lidertv.nativeapp.ui.player.zap.NumberEntry.digitOfKeyCode(ev.nativeKeyEvent.keyCode)?.let { d -> zap.digit(d) { u -> currentUrl = u }; return@onPreviewKeyEvent true }
+                    if (zap.isEntering && (ev.key == Key.Enter || ev.key == Key.DirectionCenter || ev.key == Key.NumPadEnter)) { zap.commitNow(); return@onPreviewKeyEvent true }
+                }
+                val hidden = !overlayVisible && panel == Panel.None && !drawerOpen
+                val okKey = ev.key == Key.DirectionCenter || ev.key == Key.Enter || ev.key == Key.NumPadEnter || ev.key == Key.ButtonSelect || ev.key == Key.ButtonA
+                // Bouton « Passer l'intro » affiché (commandes masquées) : OK l'exécute au lieu d'afficher les commandes.
+                if (hidden && okKey && skipOffer != null) { doSkip(); return@onPreviewKeyEvent true }
+                if (isLive && panel == Panel.None && !drawerOpen) {
+                    val code = ev.nativeKeyEvent.keyCode
+                    val osdKey = when {
+                        code == android.view.KeyEvent.KEYCODE_LAST_CHANNEL -> OsdKey.LAST_CHANNEL
+                        // Touche TV (télécommandes Google TV, ex. Mecool G10) : liste des chaînes.
+                        code == android.view.KeyEvent.KEYCODE_TV || ev.key == Key.Guide -> OsdKey.GUIDE
+                        ev.key == Key.ChannelUp || ev.key == Key.PageUp -> OsdKey.CHANNEL_UP
+                        ev.key == Key.ChannelDown || ev.key == Key.PageDown -> OsdKey.CHANNEL_DOWN
+                        okKey -> OsdKey.OK
+                        ev.key == Key.DirectionUp -> OsdKey.UP
+                        ev.key == Key.DirectionDown -> OsdKey.DOWN
+                        ev.key == Key.DirectionLeft -> OsdKey.LEFT
+                        ev.key == Key.DirectionRight -> OsdKey.RIGHT
+                        ev.key == Key.Menu -> OsdKey.MENU
+                        ev.key == Key.Info -> OsdKey.INFO
+                        else -> OsdKey.OTHER
+                    }
+                    // Décision pure (LiveOsdLogic) : OSD fermé, OK / Bas l'ouvrent, Haut zappe ; OSD ouvert, le focus de Compose circule.
+                    when (val d = LiveOsdLogic.decide(osdKey, osdOpen = controlsEngaged, controlsHidden = hidden, tsActive = tsActive, errorShown = state.phase == Phase.ERROR)) {
+                        // Touche « chaîne précédente » : rappel de la dernière chaîne regardée (Retour, lui, quitte le lecteur).
+                        OsdDecision.RecallPrevious -> {
+                            if (zap.hasPrevious()) { touch(); zap.recallPrevious { currentUrl = it } }   // chaîne verrouillée : code demandé (ParentalGuard)
+                            else if (osdKey == OsdKey.LEFT) Toaster.show(O.noPreviousChannel)   // Gauche : rien à rappeler, on le dit
+                            return@onPreviewKeyEvent true
+                        }
+                        OsdDecision.OpenChannels -> { drawerOpen = true; return@onPreviewKeyEvent true }
+                        // Touches chaîne +/- : zap, quel que soit l'état de la surcouche.
+                        is OsdDecision.Zap -> {
+                            touch(); if (d.closeOsd) controlsEngaged = false
+                            scope.launch { vm.zap(d.forward)?.let { currentUrl = it } }; return@onPreviewKeyEvent true
+                        }
+                        is OsdDecision.TimeshiftJump -> { tsJump(d.seconds); touch(); return@onPreviewKeyEvent true }
+                        OsdDecision.OpenOsd -> { touch(); controlsEngaged = true; return@onPreviewKeyEvent true }
+                        OsdDecision.Consume -> { touch(); return@onPreviewKeyEvent true }
+                        OsdDecision.Pass -> Unit
+                    }
+                }
+                touch()
+                if (!hidden) return@onPreviewKeyEvent false
+                when (ev.key) {
+                    Key.DirectionUp -> if (isLive) { scope.launch { vm.zap(false)?.let { currentUrl = it } }; true } else false
+                    Key.DirectionDown -> if (isLive) { scope.launch { vm.zap(true)?.let { currentUrl = it } }; true } else false
+                    Key.DirectionLeft -> if (tsActive) { tsJump(-30); true } else if (!isLive) { session.engine?.let { it.seekTo((it.positionMs - 10_000).coerceAtLeast(0)) }; true } else false
+                    Key.DirectionRight -> if (tsActive) { tsJump(30); true } else if (!isLive) { session.engine?.let { it.seekTo(it.positionMs + 10_000) }; true } else false
+                    else -> true      // OK (VOD) / Info / Menu / autres : on affiche la surcouche des commandes
+                }
+            },
+    ) {
+        if (touch) {
+            val dpPx = androidx.compose.ui.platform.LocalDensity.current.density
+            val progressNow = System.currentTimeMillis()
+            val prog = vm.nowProgramme.collectAsState().value
+            val liveProgress = isLive && !tsActive
+            val fraction: Float; val startLabel: String; val endLabel: String
+            if (tsActive && tsSnap != null) { fraction = tsSnap!!.fraction; startLabel = EpgClock.hm(progressNow - tsSnap!!.windowSec * 1000L); endLabel = X.directMark }
+            else if (liveProgress) {
+                val st = prog?.startMs; val en = prog?.endMs
+                fraction = if (st != null && en != null && en > st) ((progressNow - st).toFloat() / (en - st)).coerceIn(0f, 1f) else 0f
+                startLabel = st?.let { EpgClock.hm(it) }.orEmpty(); endLabel = en?.let { EpgClock.hm(it) }.orEmpty()
+            } else { fraction = if (dur > 0) (pos.toFloat() / dur).coerceIn(0f, 1f) else 0f; startLabel = fmt(pos); endLabel = if (dur > 0) fmt(dur) else "" }
+            // Direct : mêmes boutons que la barre de l'OSD (ordre et libellés de OsdActions), en pilules tactiles ; VOD inchangée.
+            val pillList = buildList {
+                if (isLive) {
+                    // Portrait : la liste des chaînes est sous la vidéo et le bandeau a ses propres boutons lecture / sauts.
+                    osdActions.filter { !portrait || it.id !in PORTRAIT_HIDDEN }
+                        .forEach { a -> add(tr.lidertv.nativeapp.ui.mobile.ControlPill(listOfNotNull(a.label, a.detail).joinToString(" · "), a.icon, { onOsdAction(a.id) }, a.active, a.fillIcon)) }
+                } else {
+                    add(tr.lidertv.nativeapp.ui.mobile.ControlPill(M.tracks, "M4 6h16M4 12h10M4 18h6", { panel = Panel.Tracks }))
+                    add(tr.lidertv.nativeapp.ui.mobile.ControlPill(X.subsPill, tr.lidertv.nativeapp.ui.mobile.MobileIcons.Subs, { panel = Panel.Subtitles }))
+                    add(tr.lidertv.nativeapp.ui.mobile.ControlPill(X.sleepPill, tr.lidertv.nativeapp.ui.mobile.MobileIcons.Moon, { sleepMenu = true }, active = sleepPhase != tr.lidertv.nativeapp.ui.player.sleep.SleepPhase.IDLE))
+                    add(tr.lidertv.nativeapp.ui.mobile.ControlPill(M.pip, tr.lidertv.nativeapp.ui.mobile.MobileIcons.Pip, { if (!context.enterPip()) Toaster.show(M.pipUnavailable) }))
+                    add(tr.lidertv.nativeapp.ui.mobile.ControlPill(D.pPlayer, "M3 5h18v12H3zM8 21h8M12 17v4", { panel = Panel.Options }))
+                }
+            }
+            val nextProg by vm.nextProgramme.collectAsState()
+            val thenLine = if (isLive && !tsActive) ProgrammeInfo.thenLine(X.thenWord, nextProg, EpgClock::hm) else null
+            val headTitle = if (isLive) (prog?.title ?: item?.title ?: title) else (item?.title ?: title)
+            val badge = if (isLive) tr.lidertv.nativeapp.ui.mobile.liveBadgeText(D.live, null, item?.title ?: title) else null
+            val videoArea: @Composable () -> Unit = {
+                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                    AndroidView(factory = { container.also { v -> (v.parent as? android.view.ViewGroup)?.removeView(v) } }, modifier = Modifier.fillMaxSize())
+                    if (!tr.lidertv.nativeapp.ui.mobile.PipState.active) {
+                        tr.lidertv.nativeapp.ui.mobile.GestureLayer(
+                            isLive = isLive, modifier = Modifier.fillMaxSize(),
+                            onTap = { if (overlayVisible) overlayVisible = false else touch() },
+                            onDoubleTap = { zone ->
+                                val d = tr.lidertv.nativeapp.ui.mobile.doubleTapSeekMs(zone, isLive && !tsActive)
+                                if (d != null) { session.engine?.let { it.seekTo(tr.lidertv.nativeapp.ui.mobile.seekTarget(it.positionMs, d, it.durationMs)) }; hud = tr.lidertv.nativeapp.ui.mobile.GestureHud.Seek(d > 0) }
+                                else if (zone == tr.lidertv.nativeapp.ui.mobile.TapZone.CENTER) togglePlay()
+                            },
+                            onDragStart = { role -> dragStartLevel = when (role) { tr.lidertv.nativeapp.ui.mobile.DragRole.BRIGHTNESS -> levels.brightness(); tr.lidertv.nativeapp.ui.mobile.DragRole.VOLUME -> levels.volume(); else -> 0f } },
+                            onDrag = { role, total, h ->
+                                if (role == tr.lidertv.nativeapp.ui.mobile.DragRole.BRIGHTNESS || role == tr.lidertv.nativeapp.ui.mobile.DragRole.VOLUME) {
+                                    val lv = tr.lidertv.nativeapp.ui.mobile.levelAfterDrag(dragStartLevel, total, h)
+                                    if (role == tr.lidertv.nativeapp.ui.mobile.DragRole.BRIGHTNESS) levels.setBrightness(lv) else levels.setVolume(lv)
+                                    hud = tr.lidertv.nativeapp.ui.mobile.GestureHud.Level(role, lv)
+                                }
+                            },
+                            onDragEnd = { role, total ->
+                                if (role == tr.lidertv.nativeapp.ui.mobile.DragRole.ZAP) tr.lidertv.nativeapp.ui.mobile.zapFor(total, 80f * dpPx)?.let { dir ->
+                                    hud = tr.lidertv.nativeapp.ui.mobile.GestureHud.Zap(dir > 0)
+                                    scope.launch { vm.zap(dir > 0)?.let { currentUrl = it } }
+                                }
+                            },
+                            onPinch = { sc -> val next = tr.lidertv.nativeapp.ui.mobile.aspectAfterPinch(aspect, sc); if (next != aspect) { aspect = next; hud = tr.lidertv.nativeapp.ui.mobile.GestureHud.Aspect(next) } },
+                        )
+                        if (state.phase == Phase.LOADING) LoadingVisual(item?.poster, item?.title ?: title)
+                        if (state.phase == Phase.ERROR) ErrorPanel(
+                            kind = state.error ?: PlayErrorKind.UNKNOWN, canNext = isLive, D = D,
+                            onRetry = { session.retry() }, onNext = { scope.launch { vm.zap(true)?.let { currentUrl = it } } }, onClose = leave,
+                        )
+                        if (overlayVisible && state.phase != Phase.ERROR && !drawerOpen && panel == Panel.None) run {
+                            // Direct paysage : l'OSD (étage haut, récents, pilules défilantes) remplace les commandes habituelles.
+                            if (osdState != null && !portrait) LiveOsd(
+                                state = osdState, focus = osdFocus, onAction = onOsdAction, onRecent = onOsdRecent,
+                                backDescription = M.a11yBack, onBack = leave,
+                                topEnd = if (lockedLandscape) ({ tr.lidertv.nativeapp.ui.mobile.PlayerRoundButton(tr.lidertv.nativeapp.ui.mobile.MobileIcons.Fullscreen, M.rotateHint) { context.lockOrientation(false) } }) else null,
+                            ) else MobileControls(
+                                isLive = isLive && !tsActive, badge = badge, title = headTitle, subtitle = thenLine, playing = playing,
+                                fraction = fraction, startLabel = startLabel, endLabel = endLabel, seekable = !isLive && dur > 0, compact = portrait,
+                                onBack = leave, onTogglePlay = togglePlay,
+                                onSeekBy = { d -> if (tsActive) { tsJump((d / 1000).toInt()) } else session.engine?.let { it.seekTo(tr.lidertv.nativeapp.ui.mobile.seekTarget(it.positionMs, d, it.durationMs)) }; touch() },
+                                onSeekTo = { f -> if (dur > 0) session.engine?.seekTo((dur * f).toLong()); touch() },
+                                onSettings = { panel = Panel.Options }, pills = pillList, jumpSec = if (tsActive) 30 else 10,
+                                onFullscreen = if (portrait) ({ context.lockOrientation(true) }) else if (lockedLandscape) ({ context.lockOrientation(false) }) else null,
+                            )
+                        }
+                        GestureHudView(hud)
+                    }
+                }
+            }
+            if (portrait && !tr.lidertv.nativeapp.ui.mobile.PipState.active) {
+                val queueEntries by vm.queue.collectAsState()
+                Column(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f)) { videoArea() }
+                    tr.lidertv.nativeapp.ui.mobile.PortraitInfo(
+                        live = isLive, liveLabel = D.live, title = headTitle, subtitle = if (isLive) item?.title else null, pills = pillList,
+                        entries = queueEntries, channelsLabel = M.channels, thenLine = thenLine,
+                        onPick = { ch -> scope.launch { vm.zapTo(ch)?.let { currentUrl = it } } }, modifier = Modifier.weight(1f),
+                    )
+                }
+            } else videoArea()
+        } else {
+        // takeVideoView : la vue vidéo peut venir de l'aperçu du Direct (changement de parent sans recharger le flux).
+        AndroidView(factory = { session.takeVideoView() }, modifier = Modifier.fillMaxSize())
+
+        // Chargement : visuel de la chaîne avec anneau de progression.
+        if (state.phase == Phase.LOADING) LoadingVisual(item?.poster, item?.title ?: title)
+        if (state.phase == Phase.ERROR) ErrorPanel(
+            kind = state.error ?: PlayErrorKind.UNKNOWN, canNext = isLive, D = D,
+            onRetry = { session.retry() },
+            onNext = { scope.launch { vm.zap(true)?.let { currentUrl = it } } },
+            onClose = leave,
+        )
+
+        if (overlayVisible && state.phase != Phase.ERROR && !drawerOpen && panel == Panel.None) {
+            if (!isLive) VodOverlay(
+                title = item?.title ?: title, badges = badges, pos = { pos }, dur = { dur }, speed = speed,
+                playing = playing, loading = state.phase == Phase.LOADING, hasPrev = epNav.first, hasNext = epNav.second, sleepActive = sleepPhase != tr.lidertv.nativeapp.ui.player.sleep.SleepPhase.IDLE,
+                pauseFocus = pauseFocus, X = X,
+                onPrev = { stepEpisode(-1) }, onSeek = { d -> session.engine?.let { it.seekTo((it.positionMs + d).coerceAtLeast(0)) }; touch() },
+                onToggle = { session.engine?.let { if (it.isPlaying) it.pause() else it.play() }; touch() },
+                onNext = { stepEpisode(1) },
+                onSubs = { panel = Panel.Subtitles }, onSleep = { sleepMenu = true }, onOptions = { panel = Panel.Options }, onAudio = { panel = Panel.Tracks },
+            ) else if (osdState != null) LiveOsd(
+                state = osdState, focus = osdFocus, onAction = onOsdAction, onRecent = onOsdRecent,
+                initialStage = OsdStage.CONTROLS, onStage = { osdStage = it },
+            )
+        }
+        }
+        // TV : visible seulement commandes masquées (non focalisable, OK l'exécute). Tactile : toujours, au doigt.
+        if (skipOffer != null && !drawerOpen && panel == Panel.None && !sleepMenu && (touch || !overlayVisible || !isLive)) SkipChip(
+            label = when {
+                skipOffer.toNextEpisode -> X.nextEpisode
+                skipOffer.kind == tr.lidertv.nativeapp.data.skip.SkipKind.RECAP -> X.skipRecap
+                skipOffer.kind == tr.lidertv.nativeapp.data.skip.SkipKind.CREDITS -> X.skipCredits
+                else -> X.skipIntro
+            },
+            okHint = !touch, onClick = doSkip,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 96.design, bottom = if (touch) 150.design else if (overlayVisible && !isLive) 340.design else 96.design),
+        )
+        zapPreview?.let { pv ->
+            tr.lidertv.nativeapp.ui.player.zap.ZapNumberBox(pv, X, Modifier.align(Alignment.TopEnd).padding(top = 54.design, end = 96.design))
+            tr.lidertv.nativeapp.ui.player.zap.ZapRecentStrip(zapRecent, item?.remoteId, X, Modifier.align(Alignment.BottomStart))
+        }
+        if (infoOpen) InfoCard(vm, isLive, item?.title ?: title, dur, X, X.thenWord, onClose = { infoOpen = false })
+        pinPending?.let { pp ->
+            tr.lidertv.nativeapp.ui.parental.PinPromptDialog(
+                title = pp.channel.title,
+                onUnlocked = { vm.guard.grant()?.let { currentUrl = it }; touch() },
+                onCancel = { vm.guard.cancel() },
+            )
+        }
+        if (sleepMenu) tr.lidertv.nativeapp.ui.player.sleep.SleepMenu(
+            X, vm.nowProgramme.collectAsState().value?.endMs, sleepTimer.choice != null,
+            onPick = { c -> if (c == null) sleepTimer.cancel() else sleepTimer.arm(c, System.currentTimeMillis()); sleepMenu = false; touch() }, onClose = { sleepMenu = false },
+        )
+        if (sleepPhase == tr.lidertv.nativeapp.ui.player.sleep.SleepPhase.WARNING && !sleepMenu) tr.lidertv.nativeapp.ui.player.sleep.AreYouThereDialog(
+            X, sleepLeft, onStay = { sleepTimer.confirmPresence(System.currentTimeMillis()); sleepPhase = tr.lidertv.nativeapp.ui.player.sleep.SleepPhase.IDLE },
+            onStop = { sleepTimer.arm(tr.lidertv.nativeapp.ui.player.sleep.SleepChoice.Minutes(0), 0L) },
+        )
+        if (statsOpen) StatsCard(session, D, Modifier.align(Alignment.TopEnd).padding(top = 220.design, end = 96.design))
+        if (drawerOpen && isLive) LiveDrawer(vm = vm, onPick = { ch -> scope.launch { vm.zapTo(ch)?.let { currentUrl = it }; drawerOpen = false } }, onDismiss = { drawerOpen = false })
+        if (panel == Panel.Subtitles) {
+            val eng = session.engine
+            var subTracks by remember { mutableStateOf(eng?.subtitleTracks().orEmpty()) }
+            androidx.compose.runtime.LaunchedEffect(eng) { while (true) { kotlinx.coroutines.delay(1_000); eng?.subtitleTracks()?.let { subTracks = it } } }
+            var needsRestart by remember { mutableStateOf(false) }
+            val closeSubs = { panel = Panel.None; if (needsRestart) session.retry() }     // VLC : le style se fixe à la création du moteur
+            tr.lidertv.nativeapp.ui.player.subtitles.SubtitlePanel(
+                X, subVm, subTracks, delaySupported = eng?.kind == EngineKind.VLC, isMovie = item?.kind == "MOVIE", movieTitle = item?.title ?: title, isLive = isLive,
+                onSelectTrack = { id -> eng?.selectSubtitle(id); subVm.setAutoOn(id != null); subTracks = subTracks.map { it.copy(selected = it.id == id) } },
+                onStyle = { st -> if (eng?.applySubtitleStyle(st) == false) needsRestart = true; eng?.setSubtitleDelay(st.delayMs) },
+                onDownloaded = { path -> if (eng?.addExternalSubtitle(path) == true) Toaster.ok(X.subtitleAdded) },
+                onClose = closeSubs,
+            )
+        }
+        if (panel == Panel.Options || panel == Panel.Tracks) PlayerSidePanel(
+            initial = if (panel == Panel.Tracks) SideTab.TRACKS else SideTab.PLAYER,
+            title = item?.title ?: title, p = p, vm = vm, session = session, state = state, aspect = aspect, speed = speed, isLive = isLive, statsOpen = statsOpen, sleepActive = sleepDeadline > 0, D = D,
+            onAspect = { aspect = it }, onSpeed = { speed = it }, onStats = { statsOpen = !statsOpen },
+            onSleep = { min -> sleepDeadline = if (min > 0) System.currentTimeMillis() + min * 60_000L else 0L },
+            onSwitch = { c -> session.switchTo(c) }, onBuffer = { b -> session.setBufferPreset(b) },
+            onExternal = { runCatching { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_VIEW).apply { setDataAndType(Uri.parse(currentUrl), "video/*"); flags = Intent.FLAG_ACTIVITY_NEW_TASK }, S.recordingsOpenWith)) } },
+            onClose = { panel = Panel.None }, onSubsChoice = { subVm.setAutoOn(it) })
+    }
+}
+
+private fun Modifier.androidx_focusable() = this.focusable()
+
+/** Boutons de la barre du Direct absents de la barre de pilules du mode portrait (déjà couverts par la vidéo et la liste). */
+private val PORTRAIT_HIDDEN = setOf(OsdActionId.CHANNELS, OsdActionId.HISTORY, OsdActionId.PLAY_PAUSE, OsdActionId.JUMP_BACK, OsdActionId.JUMP_FORWARD)
+
+/** Bouton « Passer l'intro » (maquette : pastille claire en bas à droite, au-dessus de la vidéo). */
+@Composable
+private fun SkipChip(label: String, okHint: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier.clip(RoundedCornerShape(40.design)).background(Color(0xF2F5F5F7)).clickable(onClick = onClick)
+            .padding(horizontal = 30.design, vertical = 16.design),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        DIcon("M5 4l10 8-10 8zM19 5v14", 26.design, Color(0xFF0A0A0C), strokeWidth = 2.4f)
+        Text(label, color = Color(0xFF0A0A0C), fontFamily = Manrope, fontWeight = FontWeight.Bold, fontSize = 24.spx, maxLines = 1,
+            modifier = Modifier.padding(start = 12.design))
+        if (okHint) Text("OK", color = Color(0xFF0A0A0C), fontFamily = Manrope, fontWeight = FontWeight.Bold, fontSize = 18.spx,
+            modifier = Modifier.padding(start = 16.design).clip(RoundedCornerShape(6.design)).background(Color(0x1F0A0A0C)).padding(horizontal = 8.design, vertical = 2.design))
+    }
+}
+
+// ───────────────────────── Surcouche ─────────────────────────
+
+private fun fmt(ms: Long): String { val s = ms / 1000; val h = s / 3600; val m = s % 3600 / 60; val sec = s % 60; return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec) }
+
+/**
+ * Chargement : l'image du programme (ou le logo) en plein écran, floutée et assombrie, le visuel net au centre,
+ * le titre et une fine barre animée — au lieu d'une petite vignette dans un cadre sur fond noir.
+ */
+@Composable
+private fun LoadingVisual(logo: String?, name: String) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // Flou plein écran affiché à CHAQUE zap, au moment où le décodeur démarre : réservé aux appareils qui le
+        // rendent vraiment (API 31+, hors low-RAM), comme BlurredFill ; ailleurs un simple fond.
+        val richBackdrop = !tr.lidertv.nativeapp.ui.common.LocalLowRam.current && android.os.Build.VERSION.SDK_INT >= 31
+        if (richBackdrop && !logo.isNullOrBlank()) {
+            coil3.compose.AsyncImage(
+                model = coil3.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current).data(logo).size(320, 180).build(),
+                contentDescription = null, contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().blur(48.dp).alpha(0.45f),
+            )
+        }
+        Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(Color(0x660A0A0C), Color(0xE60A0A0C)))))
+        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(36.design)) {
+            LogoBox(logo, name, Modifier.width(360.design).height(240.design), radius = 28, pad = 20, bg = Color(0x33FFFFFF))
+            Text(name, color = Ux.Text, fontFamily = Sora, fontWeight = FontWeight.Bold, fontSize = 40.spx, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 1200.design))
+            androidx.compose.material3.LinearProgressIndicator(
+                color = Ux.Accent, trackColor = Color(0x33FFFFFF),
+                modifier = Modifier.width(320.design).height(6.design).clip(RoundedCornerShape(3.design)),
+            )
+        }
+    }
+}
+
+@Composable
+internal fun ErrorPanel(kind: PlayErrorKind, canNext: Boolean, D: DesignStrings, onRetry: () -> Unit, onNext: () -> Unit, onClose: () -> Unit) {
+    val (title, hint) = when (kind) {
+        PlayErrorKind.REFUSED -> D.errRefused to D.errRefusedHint
+        PlayErrorKind.NO_LINK -> D.errNoLink to D.errNoLinkHint
+        PlayErrorKind.PORTAL_REFUSED -> D.errPortalRefused to D.errPortalRefusedHint
+        PlayErrorKind.NETWORK -> D.errNetwork to null
+        PlayErrorKind.FORMAT, PlayErrorKind.DECODER, PlayErrorKind.NO_PICTURE -> D.errFormat to null
+        PlayErrorKind.NOT_FOUND -> D.errNotFound to null
+        PlayErrorKind.START_TIMEOUT -> D.errStartTimeout to D.errStartTimeoutHint
+        PlayErrorKind.DRM_UNSUPPORTED -> D.errDrmUnsupported to D.errDrmUnsupportedHint
+        PlayErrorKind.DRM_LICENSE -> D.errDrmLicense to D.errDrmLicenseHint
+        PlayErrorKind.DRM_INVALID -> D.errDrmInvalid to D.errDrmInvalidHint
+        else -> D.errNoResponse to null
+    }
+    val first = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
+    Box(Modifier.fillMaxSize().background(Color(0xE60A0A0C)), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(28.design), modifier = Modifier.widthIn(max = 1000.design)) {
+            Text(title, color = Ux.Text, fontFamily = Sora, fontWeight = FontWeight.Bold, fontSize = 52.spx, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            hint?.let { Text(it, color = Ux.Text2, fontFamily = Manrope, fontSize = 26.spx, maxLines = 2) }
+            Row(horizontalArrangement = Arrangement.spacedBy(24.design)) {
+                PillButton(LocalDs.current.retry, onRetry, bg = Ux.Cta, weight = FontWeight.Bold, modifier = Modifier.focusRequester(first))
+                if (canNext) PillButton(D.nextChannel, onNext)
+                PillButton(D.close, onClose)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatsCard(session: PlaybackSession, D: DesignStrings, modifier: Modifier) {
+    var s by remember { mutableStateOf(session.engine?.stats()) }
+    LaunchedEffect(Unit) { while (true) { s = session.engine?.stats(); delay(1_000) } }
+    val st by session.state.collectAsState()
+    Column(modifier.width(520.design).clip(RoundedCornerShape(20.design)).background(Color(0xE60F0F12)).padding(28.design), verticalArrangement = Arrangement.spacedBy(8.design)) {
+        Text(D.statsLabel.uppercase(), color = Ux.Text3, fontFamily = Manrope, fontWeight = FontWeight.Bold, fontSize = 22.spx, letterSpacing = 2.sp(), maxLines = 1)
+        val x = s
+        fun row(k: String, v: String?) { }
+        listOf(
+            D.engine to (if (st.combo.engine == EngineKind.EXO) D.engineExo else D.engineVlc),
+            D.decoding to (if (x?.hardwareDecoding == true) D.hardware else D.software),
+            "↔" to (x?.resolution ?: "—"), "▶" to (x?.videoCodec ?: "—") + (x?.frameRate?.let { " · %.0f fps".format(it) } ?: ""),
+            "♪" to (x?.audioCodec ?: "—") + (x?.audioChannels?.let { " · ${it}ch" } ?: ""),
+            D.bufferMemory to (x?.bufferedSeconds?.let { "$it s" } ?: "—"),
+            "kbps" to (x?.videoBitrateKbps?.toString() ?: "—"), "⚠" to (x?.droppedFrames?.toString() ?: "—"),
+        ).forEach { (k, v) ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(k, color = Ux.Text3, fontFamily = Manrope, fontSize = 22.spx, maxLines = 1)
+                Text(v, color = Ux.Text, fontFamily = Manrope, fontWeight = FontWeight.SemiBold, fontSize = 22.spx, maxLines = 1)
+            }
+        }
+    }
+}
+
+private fun Int.sp() = androidx.compose.ui.unit.TextUnit(this.toFloat(), androidx.compose.ui.unit.TextUnitType.Sp)
+
+// ───────────────────────── Panneau de réglages (maquette LecteurReglages) ─────────────────────────
+
+/** Ligne d'option de 64 px : composant partagé [tr.lidertv.nativeapp.ui.design.ChoiceRow] (actif = ✓ + accent, indépendant du focus). */
+@Composable
+private fun OptionRow(label: String, hint: String?, selected: Boolean, onClick: () -> Unit) =
+    tr.lidertv.nativeapp.ui.design.ChoiceRow(label, selected, onClick, hint = hint)
+
+@Composable
+private fun OptionGroup(title: String, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.design)) {
+        Text(title.uppercase(), color = Ux.Text3, fontFamily = Manrope, fontWeight = FontWeight.ExtraBold, fontSize = 22.spx, letterSpacing = 2.sp(), maxLines = 1)
+        Column(verticalArrangement = Arrangement.spacedBy(8.design)) { content() }
+    }
+}
+
+@Composable
+private fun PlayerSidePanel(
+    initial: SideTab, title: String, p: UserPrefs, vm: PlayerViewModel, session: PlaybackSession, state: tr.lidertv.nativeapp.ui.player.engine.SessionState,
+    aspect: AspectMode, speed: Float, isLive: Boolean, statsOpen: Boolean, sleepActive: Boolean, D: DesignStrings,
+    onAspect: (AspectMode) -> Unit, onSpeed: (Float) -> Unit, onStats: () -> Unit, onSleep: (Int) -> Unit, onSwitch: (Combo) -> Unit, onBuffer: (BufferPreset) -> Unit,
+    onExternal: () -> Unit, onClose: () -> Unit, onSubsChoice: (Boolean) -> Unit = {},
+) {
+    var tab by remember { mutableStateOf(initial) }
+    val e = session.engine
+    // Les pistes se découvrent à l'analyse du flux (parfois après l'ouverture du panneau) : liste relue tant qu'il est ouvert.
+    var audio by remember { mutableStateOf(e?.audioTracks().orEmpty()) }
+    var subs by remember { mutableStateOf(e?.subtitleTracks().orEmpty()) }
+    androidx.compose.runtime.LaunchedEffect(e) { while (true) { audio = e?.audioTracks().orEmpty(); subs = e?.subtitleTracks().orEmpty(); kotlinx.coroutines.delay(1_000) } }
+    val labels = listOf(SideTab.TRACKS to D.pTracks, SideTab.DISPLAY to D.pDisplay, SideTab.PLAYER to D.pPlayer, SideTab.STATS to D.statsShort)
+    val touch = tr.lidertv.nativeapp.ui.mobile.LocalTouch.current
+    ModalFocusScope(onBack = onClose, modifier = Modifier.background(androidx.compose.ui.graphics.Color.Transparent), contentAlignment = Alignment.CenterEnd) {
+        // Tactile : toucher à côté du panneau le ferme.
+        if (touch) Box(Modifier.matchParentSize().clickable(interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, indication = null, onClick = onClose))
+        Column(
+            Modifier.fillMaxHeight().then(if (touch) Modifier.width(360.dp) else Modifier.width(640.design)).background(Ux.Rail).border(1.design, Ux.Surface2).padding(horizontal = 56.design, vertical = 54.design),
+            verticalArrangement = Arrangement.spacedBy(22.design),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.design), modifier = if (touch) Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()) else Modifier) {
+                labels.forEach { (t, l) ->
+                    val sel = t == tab
+                    // Onglet courant : fond surface + texte accent gras + soulignement accent ; focus : fond clair (comme partout).
+                    // Avant, l'onglet courant ÉTAIT un fond clair : impossible de le distinguer de l'onglet focalisé.
+                    FocusSurface(onClick = { tab = t }, shape = RoundedCornerShape(26.design), bg = if (sel) Ux.Surface2 else Ux.Surface, ringWidth = 4.design, focusedScale = 1f, modifier = Modifier.height(52.designT)) { f ->
+                        Box(Modifier.height(52.designT).padding(horizontal = 18.design), contentAlignment = Alignment.Center) {
+                            Text(l, color = if (f) Ux.TextOnLight else if (sel) Ux.AccentInk else Ux.Text2, fontFamily = Manrope, fontWeight = if (sel) FontWeight.ExtraBold else FontWeight.SemiBold, fontSize = 22.spx, maxLines = 1)
+                            if (sel) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.design).width(28.design).height(4.design).clip(RoundedCornerShape(2.design)).background(if (f) Ux.TextOnLight else Ux.Accent))
+                        }
+                    }
+                }
+            }
+            Text(D.forThisChannel(title), color = Ux.Text3, fontFamily = Manrope, fontSize = 22.spx, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Column(Modifier.weight(1f).verticalScroll(androidx.compose.foundation.rememberScrollState()), verticalArrangement = Arrangement.spacedBy(22.design)) {
+                when (tab) {
+                    SideTab.TRACKS -> {
+                        OptionGroup(D.audio) {
+                            if (audio.isEmpty()) OptionRow("—", null, false) {}
+                            audio.forEach { t -> OptionRow(t.label, null, t.selected) { session.selectAudio(t.id); onClose() } }
+                        }
+                        OptionGroup(D.subtitles) {
+                            OptionRow(D.off, null, subs.none { it.selected }) { e?.selectSubtitle(null); onSubsChoice(false); onClose() }
+                            subs.forEach { t -> OptionRow(t.label, null, t.selected) { e?.selectSubtitle(t.id); onSubsChoice(true); onClose() } }
+                            // Direct sans aucune piste (ex. chaîne sans sous-titres codés) : on l'explique au lieu de laisser un « Off » seul.
+                            if (isLive && subs.isEmpty()) Text(tr.lidertv.nativeapp.ui.player.playerExtras().liveNoSubtitles, color = Ux.Text3, fontFamily = Manrope, fontSize = 20.spx, lineHeight = 26.spx, maxLines = 5)
+                        }
+                    }
+                    SideTab.DISPLAY -> {
+                        OptionGroup(D.pDisplay) {
+                            listOf(AspectMode.FIT to D.aspectFit, AspectMode.FILL to D.aspectFill, AspectMode.ZOOM to D.aspectZoom, AspectMode.R16_9 to "16:9", AspectMode.R4_3 to "4:3")
+                                .forEach { (m, l) -> OptionRow(l, null, aspect == m) { onAspect(m) } }
+                        }
+                        if (!isLive) OptionGroup(D.speed) { listOf(0.5f, 1f, 1.25f, 1.5f, 2f).forEach { v -> OptionRow("${v}x", null, speed == v) { onSpeed(v) } } }
+                        // La minuterie n'a rien à faire ici : elle a sa propre pilule « Veille » dans la barre du lecteur.
+                    }
+                    SideTab.PLAYER -> {
+                        val engineName = if (state.combo.engine == EngineKind.EXO) D.engineExo else D.engineVlc
+                        OptionGroup(D.engine) {
+                            OptionRow(D.auto, if (p.playerEngine == "auto") engineName else null, p.playerEngine == "auto") { vm.setEngine("auto") }
+                            OptionRow(D.engineExo, null, p.playerEngine == "exo") { vm.setEngine("exo"); onSwitch(Combo(EngineKind.EXO, state.combo.decoder)) }
+                            if (!state.isProtected) OptionRow(D.engineVlc, D.vlcHint, p.playerEngine == "vlc") { vm.setEngine("vlc"); onSwitch(Combo(EngineKind.VLC, state.combo.decoder)) }
+                        }
+                        OptionGroup(D.decoding) {
+                            OptionRow(D.auto, if (p.decoderMode == "auto") (if (state.combo.decoder == DecoderMode.SOFTWARE) D.software else D.hardware) else null, p.decoderMode == "auto") { vm.setDecoder("auto"); onSwitch(Combo(state.combo.engine, DecoderMode.AUTO)) }
+                            OptionRow(D.hardware, null, p.decoderMode == "hw") { vm.setDecoder("hw"); onSwitch(Combo(state.combo.engine, DecoderMode.HARDWARE)) }
+                            OptionRow(D.software, D.softwareHint, p.decoderMode == "sw") { vm.setDecoder("sw"); onSwitch(Combo(state.combo.engine, DecoderMode.SOFTWARE)) }
+                        }
+                        OptionGroup(D.bufferMemory) {
+                            listOf(BufferPreset.AUTO to D.auto, BufferPreset.LOW_LATENCY to D.bufLow, BufferPreset.BALANCED to D.bufBalanced, BufferPreset.STABLE to D.bufStable)
+                                .forEach { (b, l) -> OptionRow(l, null, state.bufferPreset == b) { onBuffer(b) } }
+                        }
+                        if (!state.isProtected) OptionRow(LocalStrings.current.playerExternal, null, false, onExternal)
+                    }
+                    SideTab.STATS -> {
+                        OptionRow(D.statsLabel + " · " + D.onVideo, null, statsOpen, onStats)
+                        StatsRows(session, D)
+                    }
+                }
+            }
+            val backToAuto: () -> Unit = {
+                vm.setEngine("auto"); vm.setDecoder("auto"); onBuffer(BufferPreset.AUTO)
+                onSwitch(Combo(state.combo.engine, DecoderMode.AUTO))
+            }
+            if (tab == SideTab.PLAYER) PillButton(D.backToAuto, onClick = backToAuto, heightPx = 64, hPadPx = 36, fontPx = 22, weight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
+            else PillButton(D.close, onClose, heightPx = 64, hPadPx = 36, fontPx = 22, weight = FontWeight.Bold, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun StatsRows(session: PlaybackSession, D: DesignStrings) {
+    var s by remember { mutableStateOf(session.engine?.stats()) }
+    LaunchedEffect(Unit) { while (true) { s = session.engine?.stats(); delay(1_000) } }
+    val st by session.state.collectAsState()
+    val x = s
+    Column(verticalArrangement = Arrangement.spacedBy(10.design)) {
+        listOf(
+            D.engine to (if (st.combo.engine == EngineKind.EXO) D.engineExo else D.engineVlc),
+            D.decoding to (if (x?.hardwareDecoding == true) D.hardware else D.software),
+            D.statResolution to (x?.resolution ?: "—") + (x?.frameRate?.let { " · %.0f".format(it) } ?: ""),
+            D.statCodec to (x?.videoCodec ?: "—"),
+            D.statAudio to (x?.audioCodec ?: "—") + (x?.audioChannels?.let { " · ${it}ch" } ?: ""),
+            D.bufferMemory to (x?.bufferedSeconds?.let { "$it s" } ?: "—"),
+            D.statBitrate to (x?.videoBitrateKbps?.let { "%.1f Mb/s".format(it / 1000.0) } ?: "—"),
+            D.statDropped to (x?.droppedFrames?.toString() ?: "—"),
+        ).forEach { (k, v) ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(k, color = Ux.Text3, fontFamily = Manrope, fontSize = 22.spx, maxLines = 1)
+                Text(v, color = Ux.Text, fontFamily = Manrope, fontWeight = FontWeight.Bold, fontSize = 22.spx, maxLines = 1)
+            }
+        }
+    }
+}
+
+/** Masquage de la surcouche sans touche : bandeau (et VOD) / OSD complet du direct. */
+private const val OSD_HIDE_BANNER_MS = 5_000L
+private const val OSD_HIDE_FULL_MS = 8_000L

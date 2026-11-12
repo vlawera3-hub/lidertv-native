@@ -1,0 +1,95 @@
+package tr.lidertv.nativeapp.data.tmdb
+
+import tr.lidertv.nativeapp.BuildConfig
+import tr.lidertv.nativeapp.data.config.DeviceTokenStore
+import tr.lidertv.nativeapp.data.config.WorkerUrl
+import tr.lidertv.nativeapp.data.db.MovieDao
+import tr.lidertv.nativeapp.data.db.MovieEntity
+import tr.lidertv.nativeapp.data.db.SeriesDao
+import tr.lidertv.nativeapp.data.db.SeriesEntity
+import tr.lidertv.nativeapp.data.prefs.UserPreferencesStore
+import tr.lidertv.nativeapp.data.repo.FtsQuery
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import javax.inject.Inject
+import javax.inject.Singleton
+
+/** Titres de la playlist où apparaît une personne. */
+data class PersonWorks(val movies: List<MovieEntity>, val series: List<SeriesEntity>)
+
+/**
+ * Page acteur / réalisateur. Deux sources réunies : la filmographie TMDB (via le Worker, appareil appairé) rapprochée de
+ * la playlist par titre + année, puis les titres dont la distribution locale cite ce nom (fiches déjà ouvertes, listes
+ * de séries). Sans Worker, seule la seconde répond.
+ */
+@Singleton
+class PersonRepository @Inject constructor(
+    okHttp: OkHttpClient,
+    private val tokens: DeviceTokenStore,
+    private val prefs: UserPreferencesStore,
+    private val movieDao: MovieDao,
+    private val seriesDao: SeriesDao,
+) {
+    private val http = okHttp.newBuilder().followRedirects(false).followSslRedirects(false).build()
+
+    private val ids = HashMap<String, Int?>()
+
+    /** Fiche de la personne (photo, métier, naissance, biographie) ; la biographie est en anglais si TMDB n'a pas la langue de l'appli. Null sans Worker. */
+    suspend fun info(name: String): PersonInfo? = runCatching {
+        val clean = name.trim()
+        val id = personId(clean) ?: return@runCatching null
+        val lang = defaultLang()
+        val first = tmdbGet("person/$id?language=$lang")?.let { PersonLogic.info(it) }
+        if (first != null && first.bio == null && !lang.startsWith("en")) {
+            val en = tmdbGet("person/$id?language=en-US")?.let { PersonLogic.info(it) }
+            first.copy(bio = en?.bio)
+        } else first
+    }.getOrNull()
+
+    private suspend fun defaultLang(): String {
+        val app = tr.lidertv.nativeapp.i18n.AppLang.fromCode(prefs.flow.first().language)
+        return tmdbLang(app)
+    }
+
+    private suspend fun personId(name: String): Int? {
+        synchronized(ids) { if (ids.containsKey(name)) return ids[name] }
+        val q = java.net.URLEncoder.encode(name, "UTF-8")
+        val id = tmdbGet("search/person?query=$q")?.let { PersonLogic.searchBest(it, name) }
+        synchronized(ids) { ids[name] = id }
+        return id
+    }
+
+    suspend fun works(pid: Long, name: String): PersonWorks {
+        val clean = name.trim().replace("%", "").replace("_", " ")
+        if (clean.length < 3) return PersonWorks(emptyList(), emptyList())
+        val tmdb = runCatching { tmdbCredits(clean) }.getOrDefault(emptyList())
+        val movies = LinkedHashMap<Long, MovieEntity>()
+        val series = LinkedHashMap<Long, SeriesEntity>()
+        for (c in tmdb.take(MAX_CREDITS)) {
+            val match = FtsQuery.of(c.title) ?: continue
+            if (c.isTv) seriesDao.searchFts(pid, match, 12).firstOrNull { PersonLogic.matches(c, it.title, it.year) }?.let { series.putIfAbsent(it.id, it) }
+            else movieDao.searchFts(pid, match, 12).firstOrNull { PersonLogic.matches(c, it.title, it.year) }?.let { movies.putIfAbsent(it.id, it) }
+        }
+        movieDao.byPerson(pid, clean, 60).forEach { movies.putIfAbsent(it.id, it) }
+        seriesDao.byPerson(pid, clean, 60).forEach { series.putIfAbsent(it.id, it) }
+        return PersonWorks(movies.values.toList(), series.values.toList())
+    }
+
+    private suspend fun tmdbGet(path: String): String? = withContext(Dispatchers.IO) {
+        if (!tokens.isPaired) return@withContext null
+        val token = tokens.token() ?: return@withContext null
+        val base = WorkerUrl.normalize(WorkerUrl.resolve(prefs.flow.first().workerBaseUrl), BuildConfig.DEBUG) ?: return@withContext null
+        http.newCall(Request.Builder().url("$base/api/tmdb/$path").header("Authorization", "Bearer $token").get().build())
+            .execute().use { r -> if (r.isSuccessful) r.body?.string() else null }
+    }
+
+    private suspend fun tmdbCredits(name: String): List<PersonCredit> {
+        val id = personId(name) ?: return emptyList()
+        return tmdbGet("person/$id/combined_credits")?.let { PersonLogic.credits(it) }.orEmpty()
+    }
+
+    private companion object { const val MAX_CREDITS = 150 }
+}

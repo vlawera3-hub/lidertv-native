@@ -1,0 +1,106 @@
+package tr.lidertv.nativeapp.ui.player.timeshift
+
+import android.content.Context
+import android.os.StatFs
+import androidx.lifecycle.ViewModel
+import tr.lidertv.nativeapp.adaptive.AdaptiveProfile
+import tr.lidertv.nativeapp.data.timeshift.TimeshiftMath
+import tr.lidertv.nativeapp.data.timeshift.TimeshiftPlanner
+import tr.lidertv.nativeapp.data.timeshift.TimeshiftProxy
+import tr.lidertv.nativeapp.data.timeshift.TimeshiftUpstream
+import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import okhttp3.OkHttpClient
+import java.io.File
+import java.util.concurrent.TimeUnit
+import javax.inject.Inject
+import kotlinx.coroutines.flow.first
+
+enum class TimeshiftSupport { OK, HLS_UNSUPPORTED, NO_SPACE, NOT_HTTP }
+
+/** État affiché : retard sur le direct et position dans la fenêtre, en secondes. */
+data class TimeshiftSnapshot(val behindSec: Int, val windowSec: Int, val failed: Boolean) {
+    /** 0..1 : où se trouve la lecture dans la fenêtre tamponnée (1 = le direct). */
+    val fraction: Float get() = if (windowSec <= 0) 1f else ((windowSec - behindSec).toFloat() / windowSec).coerceIn(0f, 1f)
+}
+
+/**
+ * Pause du direct : tient le [TimeshiftProxy] (et donc l'unique connexion au fournisseur) le temps d'une session de lecteur.
+ * Le tampon est supprimé à la fermeture ; les fichiers orphelins d'un arrêt brutal le sont au lancement suivant.
+ */
+@HiltViewModel
+class TimeshiftViewModel @Inject constructor(
+    @ApplicationContext private val ctx: Context,
+    http: OkHttpClient,
+    private val adaptive: AdaptiveProfile,
+    private val limits: tr.lidertv.nativeapp.data.prefs.ProviderLimitsStore,
+    private val recDao: tr.lidertv.nativeapp.data.db.RecordingDao,
+    private val urls: tr.lidertv.nativeapp.data.stalker.StreamUrlResolver,
+) : ViewModel() {
+    /** Connexions simultanées de la source (`user_info.max_connections`, 1 tant qu'elle n'est pas lue). */
+    fun maxConnections(providerId: Long) = limits.maxConnections(providerId)
+
+    /** Un enregistrement tient-il déjà la seule connexion de la source que le relais va ouvrir ? */
+    suspend fun connectionConflict(providerId: Long): Boolean =
+        tr.lidertv.nativeapp.data.recording.ConnectionPolicy.onPlayRequested(recDao.observeRunningCount().first() > 0, maxConnections(providerId)) !=
+            tr.lidertv.nativeapp.data.recording.ConnectionWarning.NONE
+
+    private val dir = File(ctx.cacheDir, tr.lidertv.nativeapp.data.memory.TimeshiftRegistry.DIR_NAME)
+    // Flux continu : ni délai global (callTimeout) ni lecture arrêtée trop tôt.
+    private val client = http.newBuilder().callTimeout(0, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
+    private var proxy: TimeshiftProxy? = null
+
+    init { runCatching { dir.listFiles()?.forEach { it.delete() } } }
+
+    val isActive: Boolean get() = proxy != null
+
+    fun isLocalUrl(url: String) = url.startsWith("http://127.0.0.1:")
+
+    private fun plan() = runCatching {
+        dir.mkdirs()
+        TimeshiftPlanner.plan(StatFs(dir.absolutePath).availableBytes, adaptive.state.value.device.tier, adaptive.state.value.device.info.screenHeight)
+    }.getOrNull()
+
+    fun support(url: String): TimeshiftSupport = when {
+        // Portail Stalker : le vrai lien (HTTP) n'est demandé qu'au démarrage du relais ; un HLS y échouera (flux non MPEG-TS).
+        tr.lidertv.nativeapp.data.stalker.StalkerLink.isStalker(url) -> if (plan() == null) TimeshiftSupport.NO_SPACE else TimeshiftSupport.OK
+        !(url.startsWith("http://") || url.startsWith("https://")) -> TimeshiftSupport.NOT_HTTP
+        url.substringBefore('?').endsWith(".m3u8", ignoreCase = true) -> TimeshiftSupport.HLS_UNSUPPORTED
+        plan() == null -> TimeshiftSupport.NO_SPACE
+        else -> TimeshiftSupport.OK
+    }
+
+    /** Démarre le relais : à appeler APRÈS avoir libéré le flux en cours (une seule connexion). Renvoie l'URL locale. */
+    fun activate(upstreamUrl: String, userAgent: String): String? {
+        deactivate()
+        val plan = plan() ?: return null
+        val p = TimeshiftProxy(client, upstreamUrl, userAgent, File(dir, "buf-${System.nanoTime()}.ts"), plan.capacityBytes, plan.assumedBytesPerSec,
+            TimeshiftUpstream({ urls.open(it) }, { urls.presence(it) }))
+        p.start()
+        proxy = p
+        tr.lidertv.nativeapp.data.memory.TimeshiftRegistry.active = true
+        return p.localUrl(null)
+    }
+
+    /** Saut de [deltaSec] depuis la position de lecture ; renvoie l'URL locale à recharger. */
+    fun jump(deltaSec: Int): String? {
+        val p = proxy ?: return null
+        val to = TimeshiftMath.jump(p.playPos, deltaSec, p.bytesPerSec, p.buffer.start, p.buffer.end)
+        return p.localUrl(to)
+    }
+
+    fun goLive(): String? = proxy?.localUrl(null)
+
+    fun snapshot(): TimeshiftSnapshot? {
+        val p = proxy ?: return null
+        return TimeshiftSnapshot(
+            TimeshiftMath.behindLiveSec(p.playPos, p.buffer.end, p.bytesPerSec),
+            TimeshiftMath.windowSec(p.buffer.start, p.buffer.end, p.bytesPerSec), p.upstreamFailed,
+        )
+    }
+
+    /** Ferme le flux amont (libère la connexion du fournisseur) et supprime le tampon. */
+    fun deactivate() { proxy?.close(); proxy = null; tr.lidertv.nativeapp.data.memory.TimeshiftRegistry.active = false }
+
+    override fun onCleared() { deactivate() }
+}

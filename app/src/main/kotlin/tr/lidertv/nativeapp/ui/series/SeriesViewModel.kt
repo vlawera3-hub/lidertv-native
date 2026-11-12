@@ -1,0 +1,116 @@
+package tr.lidertv.nativeapp.ui.series
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import tr.lidertv.nativeapp.data.db.CategoryEntity
+import tr.lidertv.nativeapp.data.db.EpisodeEntity
+import tr.lidertv.nativeapp.data.db.SeriesEntity
+import tr.lidertv.nativeapp.data.prefs.HiddenCategoriesStore
+import tr.lidertv.nativeapp.data.repo.CatalogRepository
+import tr.lidertv.nativeapp.data.repo.PlaybackContext
+import tr.lidertv.nativeapp.data.repo.ProviderRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import androidx.paging.Pager
+import androidx.paging.PagingConfig
+import androidx.paging.PagingData
+import androidx.paging.cachedIn
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+
+@HiltViewModel
+class SeriesDetailViewModel @Inject constructor(
+    private val catalog: CatalogRepository,
+    private val playback: PlaybackContext,
+    private val provider: ProviderRepository,
+    private val history: tr.lidertv.nativeapp.data.repo.HistoryRepository,
+    private val tmdb: tr.lidertv.nativeapp.data.tmdb.TmdbRepository,
+    private val trakt: tr.lidertv.nativeapp.data.trakt.TraktLibraryRepository,
+    private val ratingsClient: tr.lidertv.nativeapp.data.tmdb.RatingsClient,
+) : ViewModel() {
+
+    /** Notes IMDb / Rotten Tomatoes (Worker → OMDb) ; null tant qu'inconnues. */
+    private val _ratings = kotlinx.coroutines.flow.MutableStateFlow<tr.lidertv.nativeapp.data.tmdb.ExternalRatings?>(null)
+    val ratings: StateFlow<tr.lidertv.nativeapp.data.tmdb.ExternalRatings?> = _ratings
+
+    /** Bande-annonce TMDB (URL YouTube) ; null si introuvable ou appareil non appairé. */
+    private val _trailer = MutableStateFlow<String?>(null)
+    val trailer: StateFlow<String?> = _trailer
+
+    /** Épisodes de cette série vus sur Trakt (« SxE »), vide si non lié / série absente de l'historique Trakt. */
+    val traktWatchedEpisodes: StateFlow<Set<String>> by lazy {
+        combine(_series, trakt.library) { s, lib -> if (s == null) emptySet() else lib.watchedEpisodes(s.title, s.year) }
+            .distinctUntilChanged()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+    }
+
+    /** Historique des épisodes de cette série, le plus récent d'abord (progression + « Reprendre »). */
+    @kotlinx.coroutines.ExperimentalCoroutinesApi
+    val watched: StateFlow<List<tr.lidertv.nativeapp.data.db.WatchHistoryEntity>> by lazy {
+        _series.flatMapLatest { s -> if (s == null) flowOf(emptyList()) else history.episodesOf(s.providerId, s.remoteId) }
+            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000), emptyList())
+    }
+
+    /** Même logique que MovieDetailViewModel.play. */
+    fun playEpisode(
+        seriesName: String, seriesRemoteId: String, providerId: Long, episode: EpisodeEntity,
+        onReady: (url: String, title: String) -> Unit,
+    ) {
+        val tag = "S${"%02d".format(episode.season)}E${"%02d".format(episode.episode)}"
+        // Titre lisible (lecteur, « Reprendre la lecture ») : nom nettoyé de la série, pas « 4K-NF - … (2023) (KR) », et
+        // titre d'épisode sans la répétition de la série et du marqueur.
+        val seriesTitle = _series.value?.title?.takeIf { it.isNotBlank() } ?: seriesName
+        val title = listOf(seriesTitle, tag, cleanEpisodeTitle(episode.title, seriesName, seriesTitle)).filter { it.isNotBlank() }.joinToString(" · ")
+        playback.set(PlaybackContext.Item(
+            providerId = providerId, kind = "EPISODE", remoteId = episode.remoteId,
+            // Affiche : celle de la série (l'image d'épisode manque souvent) — sans elle, carte vide à l'accueil et
+            // absence dans « Continuer à regarder » de Google TV, qui exige une image.
+            title = title, poster = episode.image ?: _series.value?.let { it.poster ?: it.backdrop }, streamUrl = episode.streamUrl,
+            parentRemoteId = seriesRemoteId,
+        ))
+        onReady(episode.streamUrl, title)
+    }
+
+    private val _series = MutableStateFlow<SeriesEntity?>(null)
+    val series: StateFlow<SeriesEntity?> = _series.asStateFlow()
+
+    private val _loading = MutableStateFlow(false)
+    val loading: StateFlow<Boolean> = _loading.asStateFlow()
+
+    private val _episodes = MutableStateFlow<List<EpisodeEntity>>(emptyList())
+    val episodes: StateFlow<List<EpisodeEntity>> = _episodes.asStateFlow()
+
+    fun load(id: Long) {
+        viewModelScope.launch {
+            _series.value = catalog.seriesById(id)
+            _loading.value = true
+        }
+        viewModelScope.launch {
+            runCatching { catalog.loadEpisodes(id) }
+            val s = catalog.seriesById(id)             // loadEpisodes complète plot / genre / année / distribution
+            _series.value = s
+            _loading.value = false
+            // Fiche enrichie TMDB (désactivée si l'appareil n'est pas appairé) : comble ce que la source ne fournit pas.
+            if (s != null) runCatching { tmdb.forSeries(s) }.getOrNull()?.let {
+                _series.value = tr.lidertv.nativeapp.data.tmdb.mergeSeries(s, it)
+                it.trailerKey?.let { k -> _trailer.value = tr.lidertv.nativeapp.data.tmdb.TmdbTrailer.webUrl(k) }
+                it.tmdbId?.let { id -> _ratings.value = runCatching { ratingsClient.forTmdb(tr.lidertv.nativeapp.data.tmdb.TmdbKind.TV, id) }.getOrNull() }
+            }
+        }
+        viewModelScope.launch {
+            catalog.episodes(id).collect { _episodes.value = it }
+        }
+    }
+}
