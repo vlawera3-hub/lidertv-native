@@ -15,7 +15,7 @@ plugins {
 // so the in-app updater and the build stay in lockstep with one edit.
 // 1.0.29 → versionName "1.0.29", versionCode 10029 (> the legacy code 39, so
 // installs over existing builds stay monotonic).
-val versionFile = rootProject.file("../VERSION")
+val versionFile = rootProject.file("VERSION")
 val appVersionName: String = versionFile.readText().trim()
 val appVersionCode: Int = run {
     val parts = appVersionName.split(".").map { it.trim().toInt() }
